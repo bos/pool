@@ -1,6 +1,7 @@
-# Welcome to aeson
+# Welcome to pool
 
-aeson is a fast Haskell library for working with JSON data.
+pool is a fast Haskell library for managing medium-lifetime pooled
+resources, such as database connections.
 
 # Join in!
 
@@ -8,15 +9,15 @@ We are happy to receive bug reports, fixes, documentation enhancements,
 and other improvements.
 
 Please report bugs via the
-[github issue tracker](http://github.com/mailrank/aeson/issues).
+[github issue tracker](http://github.com/mailrank/pool/issues).
 
-Master [git repository](http://github.com/mailrank/aeson):
+Master [git repository](http://github.com/mailrank/pool):
 
-* `git clone git://github.com/mailrank/aeson.git`
+* `git clone git://github.com/mailrank/pool.git`
 
-There's also a [Mercurial mirror](http://bitbucket.org/bos/aeson):
+There's also a [Mercurial mirror](http://bitbucket.org/bos/pool):
 
-* `hg clone http://bitbucket.org/bos/aeson`
+* `hg clone http://bitbucket.org/bos/pool`
 
 (You can create and contribute changes using either git or Mercurial.)
 
