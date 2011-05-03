@@ -1,4 +1,4 @@
-name:                pool
+name:                resource-pool
 version:             0.1.0.2
 synopsis:            A high-performance striped resource pooling implementation
 description:
