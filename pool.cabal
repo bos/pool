@@ -12,7 +12,7 @@ license-file:        LICENSE
 author:              Bryan O'Sullivan <bos@mailrank.com>
 maintainer:          Bryan O'Sullivan <bos@mailrank.com>
 copyright:           Copyright 2011 MailRank, Inc.
-category:            Data
+category:            Data, Database, Network
 build-type:          Simple
 extra-source-files:
   README.markdown
