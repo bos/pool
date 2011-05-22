@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns, RecordWildCards, ScopedTypeVariables #-}
+{-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables #-}
 
 -- |
 -- Module:      Data.Pool
@@ -30,8 +30,8 @@ import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.CatchIO (MonadCatchIO, onException)
+import Control.Monad.IO.Class (liftIO)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
@@ -67,7 +67,7 @@ data Pool a = Pool {
     -- The smallest acceptable value is 0.5 seconds.
     --
     -- The elapsed time before closing may be a little longer than
-    -- requested, as the reaper thread wakes at 2-second intervals.
+    -- requested, as the reaper thread wakes at 1-second intervals.
     , maxResources :: Int
     -- ^ Maximum number of resources to maintain per stripe.  The
     -- smallest acceptable value is 1.
@@ -143,7 +143,6 @@ reaper destroy idleTime pools = forever $ do
         modifyTVar_ inUse (subtract (length stale))
       return (map entry stale)
     forM_ resources $ \resource -> do
-      -- debug "reaper" "destroying idle resource"
       destroy resource `catch` \(_::SomeException) -> return ()
               
 -- | Temporarily take a resource from a 'Pool', perform an action with
@@ -165,7 +164,8 @@ reaper destroy idleTime pools = forever $ do
 -- destroy a pooled resource, as doing so will almost certainly cause
 -- a subsequent user (who expects the resource to be valid) to throw
 -- an exception.
-withResource :: MonadCatchIO io => Pool a -> (a -> io b) -> io b
+withResource :: MonadCatchIO m => Pool a -> (a -> m b) -> m b
+{-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
 withResource Pool{..} act = do
   i <- liftIO $ ((`mod` numStripes) . hash) <$> myThreadId
   let LocalPool{..} = localPools V.! i
@@ -177,15 +177,18 @@ withResource Pool{..} act = do
         used <- readTVar inUse
         when (used == maxResources) retry
         writeTVar inUse $! used + 1
-        return $ do
+        return $
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
   ret <- act resource `onException` (liftIO $ do
            destroy resource `catch` \(_::SomeException) -> return ()
            atomically (modifyTVar_ inUse (subtract 1)))
   liftIO $ do
-      now <- getCurrentTime
-      atomically $ modifyTVar_ entries (Entry resource now:)
+    now <- getCurrentTime
+    atomically $ modifyTVar_ entries (Entry resource now:)
   return ret
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE withResource #-}
+#endif
 
 modifyTVar_ :: TVar a -> (a -> a) -> STM ()
 modifyTVar_ v f = readTVar v >>= \a -> writeTVar v $! f a
