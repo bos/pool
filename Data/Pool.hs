@@ -28,8 +28,10 @@ module Data.Pool
 import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch, onException)
+import Control.Exception (SomeException, catch)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.CatchIO (MonadCatchIO, onException)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
@@ -163,11 +165,11 @@ reaper destroy idleTime pools = forever $ do
 -- destroy a pooled resource, as doing so will almost certainly cause
 -- a subsequent user (who expects the resource to be valid) to throw
 -- an exception.
-withResource :: Pool a -> (a -> IO b) -> IO b
+withResource :: MonadCatchIO io => Pool a -> (a -> io b) -> io b
 withResource Pool{..} act = do
-  i <- ((`mod` numStripes) . hash) <$> myThreadId
+  i <- liftIO $ ((`mod` numStripes) . hash) <$> myThreadId
   let LocalPool{..} = localPools V.! i
-  resource <- join . atomically $ do
+  resource <- liftIO . join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return create
@@ -177,11 +179,12 @@ withResource Pool{..} act = do
         writeTVar inUse $! used + 1
         return $ do
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
-  ret <- act resource `onException` do
+  ret <- act resource `onException` (liftIO $ do
            destroy resource `catch` \(_::SomeException) -> return ()
-           atomically (modifyTVar_ inUse (subtract 1))
-  now <- getCurrentTime
-  atomically $ modifyTVar_ entries (Entry resource now:)
+           atomically (modifyTVar_ inUse (subtract 1)))
+  liftIO $ do
+      now <- getCurrentTime
+      atomically $ modifyTVar_ entries (Entry resource now:)
   return ret
 
 modifyTVar_ :: TVar a -> (a -> a) -> STM ()
