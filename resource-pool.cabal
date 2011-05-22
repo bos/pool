@@ -30,6 +30,8 @@ library
   build-depends:       
     base == 4.*,
     hashable,
+    MonadCatchIO-transformers,
+    transformers,
     stm,
     time,
     vector >= 0.7
