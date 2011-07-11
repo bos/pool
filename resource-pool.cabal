@@ -1,5 +1,5 @@
 name:                resource-pool
-version:             0.1.1.0
+version:             0.2.0.0
 synopsis:            A high-performance striped resource pooling implementation
 description:
   A high-performance striped pooling abstraction for managing
@@ -30,7 +30,7 @@ library
   build-depends:       
     base == 4.*,
     hashable,
-    MonadCatchIO-transformers,
+    monad-control >= 0.2.0.1,
     transformers,
     stm,
     time,

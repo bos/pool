@@ -29,9 +29,10 @@ import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
+import Control.Exception.Control (onException)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
-import Control.Monad.CatchIO (MonadCatchIO, onException)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Control (MonadControlIO)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
@@ -164,7 +165,7 @@ reaper destroy idleTime pools = forever $ do
 -- destroy a pooled resource, as doing so will almost certainly cause
 -- a subsequent user (who expects the resource to be valid) to throw
 -- an exception.
-withResource :: MonadCatchIO m => Pool a -> (a -> m b) -> m b
+withResource :: MonadControlIO m => Pool a -> (a -> m b) -> m b
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
 withResource Pool{..} act = do
   i <- liftIO $ ((`mod` numStripes) . hash) <$> myThreadId
