@@ -28,11 +28,10 @@ module Data.Pool
 import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch)
-import Control.Exception.Control (onException)
+import Control.Exception (SomeException, catch, onException)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.IO.Control (MonadControlIO)
+import Control.Monad.IO.Control (MonadControlIO, controlIO)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
@@ -180,7 +179,7 @@ withResource Pool{..} act = do
         writeTVar inUse $! used + 1
         return $
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
-  ret <- act resource `onException` (liftIO $ do
+  ret <- controlIO $ \runInIO -> runInIO (act resource) `onException` (do
            destroy resource `catch` \(_::SomeException) -> return ()
            atomically (modifyTVar_ inUse (subtract 1)))
   liftIO $ do
