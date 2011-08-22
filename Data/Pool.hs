@@ -172,7 +172,7 @@ withResource Pool{..} act = do
   resource <- liftIO . join . atomically $ do
     ents <- readTVar entries
     case ents of
-      (Entry{..}:es) -> writeTVar entries es >> return create
+      (Entry{..}:es) -> writeTVar entries es >> return (return entry)
       [] -> do
         used <- readTVar inUse
         when (used == maxResources) retry
