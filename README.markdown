@@ -9,11 +9,11 @@ We are happy to receive bug reports, fixes, documentation enhancements,
 and other improvements.
 
 Please report bugs via the
-[github issue tracker](http://github.com/mailrank/pool/issues).
+[github issue tracker](http://github.com/bos/pool/issues).
 
-Master [git repository](http://github.com/mailrank/pool):
+Master [git repository](http://github.com/bos/pool):
 
-* `git clone git://github.com/mailrank/pool.git`
+* `git clone git://github.com/bos/pool.git`
 
 There's also a [Mercurial mirror](http://bitbucket.org/bos/pool):
 
@@ -25,4 +25,4 @@ Authors
 -------
 
 This library is written and maintained by Bryan O'Sullivan,
-<bos@mailrank.com>.
+<bos@serpentine.com>.
