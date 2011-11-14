@@ -6,11 +6,11 @@ description:
   flexibly-sized collections of resources such as database
   connections.
 
-homepage:            http://github.com/mailrank/pool
+homepage:            http://github.com/bos/pool
 license:             BSD3
 license-file:        LICENSE
-author:              Bryan O'Sullivan <bos@mailrank.com>
-maintainer:          Bryan O'Sullivan <bos@mailrank.com>
+author:              Bryan O'Sullivan <bos@serpentine.com>
+maintainer:          Bryan O'Sullivan <bos@serpentine.com>
 copyright:           Copyright 2011 MailRank, Inc.
 category:            Data, Database, Network
 build-type:          Simple
@@ -45,7 +45,7 @@ library
 
 source-repository head
   type:     git
-  location: http://github.com/mailrank/pool
+  location: http://github.com/bos/pool
 
 source-repository head
   type:     mercurial
