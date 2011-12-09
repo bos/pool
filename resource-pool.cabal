@@ -32,6 +32,7 @@ library
     hashable,
     monad-control >= 0.2.0.1,
     transformers,
+    transformers-base >= 0.4,
     stm,
     time,
     vector >= 0.7
