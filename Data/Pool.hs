@@ -1,5 +1,9 @@
 {-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables #-}
 
+#if MIN_VERSION_monad_control(0,3,0)
+{-# LANGUAGE FlexibleContexts #-}
+#endif
+
 -- |
 -- Module:      Data.Pool
 -- Copyright:   (c) 2011 MailRank, Inc.
@@ -30,14 +34,22 @@ import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch, onException)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.IO.Control (MonadControlIO, controlIO)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Prelude hiding (catch)
 import System.Mem.Weak (addFinalizer)
 import qualified Data.Vector as V
+
+#if MIN_VERSION_monad_control(0,3,0)
+import Control.Monad.Trans.Control (MonadBaseControl, control)
+import Control.Monad.Base (liftBase)
+#else
+import Control.Monad.IO.Control (MonadControlIO, controlIO)
+import Control.Monad.IO.Class (liftIO)
+#define control controlIO
+#define liftBase liftIO
+#endif
 
 -- | A single resource pool entry.
 data Entry a = Entry {
@@ -164,12 +176,18 @@ reaper destroy idleTime pools = forever $ do
 -- destroy a pooled resource, as doing so will almost certainly cause
 -- a subsequent user (who expects the resource to be valid) to throw
 -- an exception.
-withResource :: MonadControlIO m => Pool a -> (a -> m b) -> m b
+withResource ::
+#if MIN_VERSION_monad_control(0,3,0)
+    (MonadBaseControl IO m)
+#else
+    (MonadControlIO m)
+#endif
+  => Pool a -> (a -> m b) -> m b
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
 withResource Pool{..} act = do
-  i <- liftIO $ ((`mod` numStripes) . hash) <$> myThreadId
+  i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
   let LocalPool{..} = localPools V.! i
-  resource <- liftIO . join . atomically $ do
+  resource <- liftBase . join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return entry)
@@ -179,10 +197,10 @@ withResource Pool{..} act = do
         writeTVar inUse $! used + 1
         return $
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
-  ret <- controlIO $ \runInIO -> runInIO (act resource) `onException` (do
+  ret <- control $ \runInIO -> runInIO (act resource) `onException` (do
            destroy resource `catch` \(_::SomeException) -> return ()
            atomically (modifyTVar_ inUse (subtract 1)))
-  liftIO $ do
+  liftBase $ do
     now <- getCurrentTime
     atomically $ modifyTVar_ entries (Entry resource now:)
   return ret
