@@ -4,6 +4,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 #endif
 
+#if !MIN_VERSION_base(4,3,0)
+{-# LANGUAGE RankNTypes #-}
+#endif
+
 -- |
 -- Module:      Data.Pool
 -- Copyright:   (c) 2011 MailRank, Inc.
@@ -53,6 +57,14 @@ import Control.Monad.IO.Control (MonadControlIO, controlIO)
 import Control.Monad.IO.Class (liftIO)
 #define control controlIO
 #define liftBase liftIO
+#endif
+
+#if MIN_VERSION_base(4,3,0)
+import Control.Exception (mask)
+#else
+-- Don't do any async exception protection for older GHCs.
+mask :: ((forall a. IO a -> IO a) -> IO b) -> IO b
+mask f = f id
 #endif
 
 -- | A single resource pool entry.
@@ -188,11 +200,11 @@ withResource ::
 #endif
   => Pool a -> (a -> m b) -> m b
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
-withResource pool act = do
-  (resource, local) <- liftBase (takeResource pool)
-  ret <- control $ \runInIO -> runInIO (act resource) `onException`
+withResource pool act = control $ \runInIO -> mask $ \restore -> do
+  (resource, local) <- takeResource pool
+  ret <- restore (runInIO (act resource)) `onException`
             destroyResource pool local resource
-  liftBase (putResource local resource)
+  putResource local resource
   return ret
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE withResource #-}
