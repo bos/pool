@@ -25,8 +25,12 @@
 module Data.Pool
     (
       Pool(idleTime, maxResources, numStripes)
+    , LocalPool
     , createPool
     , withResource
+    , takeResource
+    , destroyResource
+    , putResource
     ) where
 
 import Control.Applicative ((<$>))
@@ -184,9 +188,27 @@ withResource ::
 #endif
   => Pool a -> (a -> m b) -> m b
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
-withResource Pool{..} act = do
+withResource pool act = do
+  (resource, local) <- liftBase (takeResource pool)
+  ret <- control $ \runInIO -> runInIO (act resource) `onException`
+            destroyResource pool local resource
+  liftBase (putResource local resource)
+  return ret
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE withResource #-}
+#endif
+
+-- | Take a resource from the pool, following the same results as
+-- 'withResource'. Note that this function should be used with caution, as
+-- improper exception handling can lead to leaked resources.
+--
+-- This function returns both a resource and the @LocalPool@ it came from so
+-- that it may either be destroyed (via 'destroyResource') or returned to the
+-- pool (via 'putResource').
+takeResource :: Pool a -> IO (a, LocalPool a)
+takeResource Pool{..} = do
   i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
-  let LocalPool{..} = localPools V.! i
+  let pool@LocalPool{..} = localPools V.! i
   resource <- liftBase . join . atomically $ do
     ents <- readTVar entries
     case ents of
@@ -197,15 +219,28 @@ withResource Pool{..} act = do
         writeTVar inUse $! used + 1
         return $
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
-  ret <- control $ \runInIO -> runInIO (act resource) `onException` (do
-           destroy resource `catch` \(_::SomeException) -> return ()
-           atomically (modifyTVar_ inUse (subtract 1)))
-  liftBase $ do
+  return (resource, pool)
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE takeResource #-}
+#endif
+
+-- | Destroy a resource. Note that this will ignore any exceptions in the
+-- destroy function.
+destroyResource :: Pool a -> LocalPool a -> a -> IO ()
+destroyResource Pool{..} LocalPool{..} resource = do
+   destroy resource `catch` \(_::SomeException) -> return ()
+   atomically (modifyTVar_ inUse (subtract 1))
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE destroyResource #-}
+#endif
+
+-- | Return a resource to the given 'LocalPool'.
+putResource :: LocalPool a -> a -> IO ()
+putResource LocalPool{..} resource = do
     now <- getCurrentTime
     atomically $ modifyTVar_ entries (Entry resource now:)
-  return ret
 #if __GLASGOW_HASKELL__ >= 700
-{-# INLINABLE withResource #-}
+{-# INLINABLE putResource #-}
 #endif
 
 modifyTVar_ :: TVar a -> (a -> a) -> STM ()
