@@ -45,7 +45,9 @@ import Control.Monad (forM_, forever, join, liftM2, unless, when)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+#if !MIN_VERSION_base (4,6,0)
 import Prelude hiding (catch)
+#endif
 import System.Mem.Weak (addFinalizer)
 import qualified Data.Vector as V
 
