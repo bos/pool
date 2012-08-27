@@ -40,13 +40,13 @@ module Data.Pool
 import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch, onException)
+import Control.Exception (SomeException, onException)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
 import Data.Hashable (hash)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
-import Prelude hiding (catch)
 import System.Mem.Weak (addFinalizer)
+import qualified Control.Exception as E
 import qualified Data.Vector as V
 
 #if MIN_VERSION_monad_control(0,3,0)
@@ -171,7 +171,7 @@ reaper destroy idleTime pools = forever $ do
         modifyTVar_ inUse (subtract (length stale))
       return (map entry stale)
     forM_ resources $ \resource -> do
-      destroy resource `catch` \(_::SomeException) -> return ()
+      destroy resource `E.catch` \(_::SomeException) -> return ()
               
 -- | Temporarily take a resource from a 'Pool', perform an action with
 -- it, and return it to the pool afterwards.
@@ -240,7 +240,7 @@ takeResource Pool{..} = do
 -- destroy function.
 destroyResource :: Pool a -> LocalPool a -> a -> IO ()
 destroyResource Pool{..} LocalPool{..} resource = do
-   destroy resource `catch` \(_::SomeException) -> return ()
+   destroy resource `E.catch` \(_::SomeException) -> return ()
    atomically (modifyTVar_ inUse (subtract 1))
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE destroyResource #-}
