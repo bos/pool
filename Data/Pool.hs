@@ -33,6 +33,8 @@ module Data.Pool
     , createPool
     , withResource
     , takeResource
+    , tryWithResource
+    , tryTakeResource
     , destroyResource
     , putResource
     ) where
@@ -99,7 +101,7 @@ data Pool a = Pool {
     , maxResources :: Int
     -- ^ Maximum number of resources to maintain per stripe.  The
     -- smallest acceptable value is 1.
-    -- 
+    --
     -- Requests for resources will block if this limit is reached on a
     -- single stripe, even if other stripes have idle resources
     -- available.
@@ -130,7 +132,7 @@ createPool
     -> Int
     -- ^ Maximum number of resources to keep open per stripe.  The
     -- smallest acceptable value is 1.
-    -- 
+    --
     -- Requests for resources will block if this limit is reached on a
     -- single stripe, even if other stripes have idle resources
     -- available.
@@ -172,7 +174,7 @@ reaper destroy idleTime pools = forever $ do
       return (map entry stale)
     forM_ resources $ \resource -> do
       destroy resource `E.catch` \(_::SomeException) -> return ()
-              
+
 -- | Temporarily take a resource from a 'Pool', perform an action with
 -- it, and return it to the pool afterwards.
 --
@@ -218,9 +220,8 @@ withResource pool act = control $ \runInIO -> mask $ \restore -> do
 -- that it may either be destroyed (via 'destroyResource') or returned to the
 -- pool (via 'putResource').
 takeResource :: Pool a -> IO (a, LocalPool a)
-takeResource Pool{..} = do
-  i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
-  let pool@LocalPool{..} = localPools V.! i
+takeResource pool@Pool{..} = do
+  local@LocalPool{..} <- getLocalPool pool
   resource <- liftBase . join . atomically $ do
     ents <- readTVar entries
     case ents of
@@ -231,9 +232,68 @@ takeResource Pool{..} = do
         writeTVar inUse $! used + 1
         return $
           create `onException` atomically (modifyTVar_ inUse (subtract 1))
-  return (resource, pool)
+  return (resource, local)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE takeResource #-}
+#endif
+
+-- | Similar to 'withResource', but only performs the action if a resource could
+-- be taken from the pool /without blocking/. Otherwise, 'tryWithResource'
+-- returns immediately with 'Nothing' (ie. the action function is /not/ called).
+-- Conversely, if a resource can be borrowed from the pool without blocking, the
+-- action is performed and it's result is returned, wrapped in a 'Just'.
+tryWithResource ::
+#if MIN_VERSION_monad_control(0,3,0)
+    (MonadBaseControl IO m)
+#else
+    (MonadControlIO m)
+#endif
+  => Pool a -> (a -> m b) -> m (Maybe b)
+tryWithResource pool act = control $ \runInIO -> mask $ \restore -> do
+  res <- tryTakeResource pool
+  case res of
+    Just (resource, local) -> do
+      ret <- restore (runInIO (Just <$> act resource)) `onException`
+                destroyResource pool local resource
+      putResource local resource
+      return ret
+    Nothing -> restore . runInIO $ return Nothing
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE tryWithResource #-}
+#endif
+
+-- | A non-blocking version of 'takeResource'. The 'tryTakeResource' function
+-- returns immediately, with 'Nothing' if the pool is exhausted, or @'Just' (a,
+-- 'LocalPool' a)@ if a resource could be borrowed from the pool successfully.
+tryTakeResource :: Pool a -> IO (Maybe (a, LocalPool a))
+tryTakeResource pool@Pool{..} = do
+  local@LocalPool{..} <- getLocalPool pool
+  resource <- liftBase . join . atomically $ do
+    ents <- readTVar entries
+    case ents of
+      (Entry{..}:es) -> writeTVar entries es >> return (return . Just $ entry)
+      [] -> do
+        used <- readTVar inUse
+        if used == maxResources
+          then return (return Nothing)
+          else do
+            writeTVar inUse $! used + 1
+            return $ Just <$>
+              create `onException` atomically (modifyTVar_ inUse (subtract 1))
+  return $ (flip (,) local) <$> resource
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE tryTakeResource #-}
+#endif
+
+-- | Get a (Thread-)'LocalPool'
+--
+-- Internal, just to not repeat code for 'takeResource' and 'tryTakeResource'
+getLocalPool :: Pool a -> IO (LocalPool a)
+getLocalPool Pool{..} = do
+  i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
+  return $ localPools V.! i
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE getLocalPool #-}
 #endif
 
 -- | Destroy a resource. Note that this will ignore any exceptions in the
