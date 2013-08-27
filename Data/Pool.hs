@@ -155,7 +155,12 @@ createPool create destroy numStripes idleTime maxResources = do
           , maxResources
           , localPools
           }
-  addFinalizer p $ killThread reaperId
+  addFinalizer p $ do
+    killThread reaperId
+    V.forM_ localPools $ \LocalPool{..} -> do
+      resources <- atomically $ map entry <$> readTVar entries
+      forM_ resources $ \resource -> do
+        destroy resource `E.catch` \(_::SomeException) -> return ()
   return p
 
 -- | Periodically go through all pools, closing any resources that
