@@ -155,7 +155,10 @@ createPool create destroy numStripes idleTime maxResources = do
           , maxResources
           , localPools
           }
+
   addFinalizer p $ killThread reaperId
+  V.mapM_ (\lp -> addFinalizer lp (purgeLocalPool destroy lp)) localPools
+
   return p
 
 -- | Periodically go through all pools, closing any resources that
@@ -174,6 +177,17 @@ reaper destroy idleTime pools = forever $ do
       return (map entry stale)
     forM_ resources $ \resource -> do
       destroy resource `E.catch` \(_::SomeException) -> return ()
+
+-- | Destroy all idle resources of the given 'LocalPool' and remove them from
+-- the pool.
+purgeLocalPool :: (a -> IO ()) -> LocalPool a -> IO ()
+purgeLocalPool destroy LocalPool{..} = do
+  resources <- atomically $ do
+    idle <- swapTVar entries []
+    modifyTVar_ inUse (subtract (length idle))
+    return (map entry idle)
+  forM_ resources $ \resource ->
+    destroy resource `E.catch` \(_::SomeException) -> return ()
 
 -- | Temporarily take a resource from a 'Pool', perform an action with
 -- it, and return it to the pool afterwards.
