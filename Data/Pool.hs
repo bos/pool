@@ -45,9 +45,9 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, onException)
 import Control.Monad (forM_, forever, join, liftM2, unless, when)
 import Data.Hashable (hash)
+import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
-import System.Mem.Weak (addFinalizer)
 import qualified Control.Exception as E
 import qualified Data.Vector as V
 
@@ -107,6 +107,8 @@ data Pool a = Pool {
     -- available.
     , localPools :: V.Vector (LocalPool a)
     -- ^ Per-capability resource pools.
+    , fin :: IORef ()
+    -- ^ empty value used to attach a finalizer to (internal)
     }
 
 instance Show (Pool a) where
@@ -147,6 +149,7 @@ createPool create destroy numStripes idleTime maxResources = do
   localPools <- atomically . V.replicateM numStripes $
                 liftM2 LocalPool (newTVar 0) (newTVar [])
   reaperId <- forkIO $ reaper destroy idleTime localPools
+  fin <- newIORef ()
   let p = Pool {
             create
           , destroy
@@ -154,8 +157,9 @@ createPool create destroy numStripes idleTime maxResources = do
           , idleTime
           , maxResources
           , localPools
+          , fin
           }
-  addFinalizer p $ killThread reaperId
+  mkWeakIORef fin $ killThread reaperId
   return p
 
 -- | Periodically go through all pools, closing any resources that
