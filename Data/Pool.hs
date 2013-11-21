@@ -43,7 +43,7 @@ import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, onException)
-import Control.Monad (forM_, forever, join, liftM2, unless, when)
+import Control.Monad (forM_, forever, join, liftM3, unless, when)
 import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
@@ -82,6 +82,8 @@ data LocalPool a = LocalPool {
     -- ^ Count of open entries (both idle and in use).
     , entries :: TVar [Entry a]
     -- ^ Idle entries.
+    , lfin :: IORef ()
+    -- ^ empty value used to attach a finalizer to (internal)
     }
 
 data Pool a = Pool {
@@ -146,8 +148,8 @@ createPool create destroy numStripes idleTime maxResources = do
     modError "pool " $ "invalid idle time " ++ show idleTime
   when (maxResources < 1) $
     modError "pool " $ "invalid maximum resource count " ++ show maxResources
-  localPools <- atomically . V.replicateM numStripes $
-                liftM2 LocalPool (newTVar 0) (newTVar [])
+  localPools <- V.replicateM numStripes $
+                liftM3 LocalPool (newTVarIO 0) (newTVarIO []) (newIORef ())
   reaperId <- forkIO $ reaper destroy idleTime localPools
   fin <- newIORef ()
   let p = Pool {
@@ -159,7 +161,8 @@ createPool create destroy numStripes idleTime maxResources = do
           , localPools
           , fin
           }
-  mkWeakIORef fin $ killThread reaperId
+  mkWeakIORef fin (killThread reaperId) >>
+    V.mapM_ (\lp -> mkWeakIORef (lfin lp) (purgeLocalPool destroy lp)) localPools
   return p
 
 -- | Periodically go through all pools, closing any resources that
@@ -178,6 +181,17 @@ reaper destroy idleTime pools = forever $ do
       return (map entry stale)
     forM_ resources $ \resource -> do
       destroy resource `E.catch` \(_::SomeException) -> return ()
+
+-- | Destroy all idle resources of the given 'LocalPool' and remove them from
+-- the pool.
+purgeLocalPool :: (a -> IO ()) -> LocalPool a -> IO ()
+purgeLocalPool destroy LocalPool{..} = do
+  resources <- atomically $ do
+    idle <- swapTVar entries []
+    modifyTVar_ inUse (subtract (length idle))
+    return (map entry idle)
+  forM_ resources $ \resource ->
+    destroy resource `E.catch` \(_::SomeException) -> return ()
 
 -- | Temporarily take a resource from a 'Pool', perform an action with
 -- it, and return it to the pool afterwards.
