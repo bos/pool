@@ -48,6 +48,7 @@ import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import GHC.Conc.Sync (labelThread)
 import qualified Control.Exception as E
 import qualified Data.Vector as V
 
@@ -150,7 +151,10 @@ createPool create destroy numStripes idleTime maxResources = do
     modError "pool " $ "invalid maximum resource count " ++ show maxResources
   localPools <- V.replicateM numStripes $
                 liftM3 LocalPool (newTVarIO 0) (newTVarIO []) (newIORef ())
-  reaperId <- forkIO $ reaper destroy idleTime localPools
+  reaperId <- forkIO $ do
+                tid <- myThreadId
+                labelThread tid "resource-pool: reaper"
+                reaper destroy idleTime localPools
   fin <- newIORef ()
   let p = Pool {
             create
