@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables #-}
+{-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables, RankNTypes #-}
 
 #if MIN_VERSION_monad_control(0,3,0)
 {-# LANGUAGE FlexibleContexts #-}
@@ -40,14 +40,15 @@ module Data.Pool
     ) where
 
 import Control.Applicative ((<$>))
-import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay)
+import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, onException)
+import Control.Exception (SomeException, onException, mask_)
 import Control.Monad (forM_, forever, join, liftM3, unless, when)
 import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import GHC.Conc.Sync (labelThread)
 import qualified Control.Exception as E
 import qualified Data.Vector as V
 
@@ -150,7 +151,8 @@ createPool create destroy numStripes idleTime maxResources = do
     modError "pool " $ "invalid maximum resource count " ++ show maxResources
   localPools <- V.replicateM numStripes $
                 liftM3 LocalPool (newTVarIO 0) (newTVarIO []) (newIORef ())
-  reaperId <- forkIO $ reaper destroy idleTime localPools
+  reaperId <- forkIOLabeledWithUnmask "resource-pool: reaper" $ \unmask ->
+                unmask $ reaper destroy idleTime localPools
   fin <- newIORef ()
   let p = Pool {
             create
@@ -164,6 +166,30 @@ createPool create destroy numStripes idleTime maxResources = do
   mkWeakIORef fin (killThread reaperId) >>
     V.mapM_ (\lp -> mkWeakIORef (lfin lp) (purgeLocalPool destroy lp)) localPools
   return p
+
+-- TODO: Propose 'forkIOLabeledWithUnmask' for the base library.
+
+-- | Sparks off a new thread using 'forkIOWithUnmask' to run the given
+-- IO computation, but first labels the thread with the given label
+-- (using 'labelThread').
+--
+-- The implementation makes sure that asynchronous exceptions are
+-- masked until the given computation is executed. This ensures the
+-- thread will always be labeled which guarantees you can always
+-- easily find it in the GHC event log.
+--
+-- Like 'forkIOWithUnmask', the given computation is given a function
+-- to unmask asynchronous exceptions. See the documentation of that
+-- function for the motivation of this.
+--
+-- Returns the 'ThreadId' of the newly created thread.
+forkIOLabeledWithUnmask :: String
+                        -> ((forall a. IO a -> IO a) -> IO ())
+                        -> IO ThreadId
+forkIOLabeledWithUnmask label m = mask_ $ forkIOWithUnmask $ \unmask -> do
+                                    tid <- myThreadId
+                                    labelThread tid label
+                                    m unmask
 
 -- | Periodically go through all pools, closing any resources that
 -- have been left idle for too long.
