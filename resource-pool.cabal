@@ -22,6 +22,7 @@ cabal-version:       >=1.8
 flag developer
   description: operate in developer mode
   default: False
+  manual: True
 
 library
   exposed-modules:     
