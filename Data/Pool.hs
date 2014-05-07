@@ -37,6 +37,7 @@ module Data.Pool
     , tryTakeResource
     , destroyResource
     , putResource
+    , destroyAllResources
     ) where
 
 import Control.Applicative ((<$>))
@@ -119,6 +120,12 @@ instance Show (Pool a) where
                     "idleTime = " ++ show idleTime ++ ", " ++
                     "maxResources = " ++ show maxResources ++ "}"
 
+-- | Create a striped resource pool.
+--
+-- Although the garbage collector will destroy all idle resources when
+-- the pool is garbage collected it's recommended to manually
+-- 'destroyAllResources' when you're done with the pool so that the
+-- resources are freed up as soon as possible.
 createPool
     :: IO a
     -- ^ Action that creates a new resource.
@@ -358,6 +365,23 @@ putResource LocalPool{..} resource = do
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE putResource #-}
 #endif
+
+-- | Destroy all resources in all stripes in the pool. Note that this
+-- will ignore any exceptions in the destroy function.
+--
+-- This function is useful when you detect that all resources in the
+-- pool are broken. For example after a database has been restarted
+-- all connections opened before the restart will be broken. In that
+-- case it's better to close those connections so that 'takeResource'
+-- won't take a broken connection from the pool but will open a new
+-- connection instead.
+--
+-- Another use-case for this function is that when you know you are
+-- done with the pool you can destroy all idle resources immediately
+-- instead of waiting on the garbage collector to destroy them, thus
+-- freeing up those resources sooner.
+destroyAllResources :: Pool a -> IO ()
+destroyAllResources Pool{..} = V.forM_ localPools $ purgeLocalPool destroy
 
 modifyTVar_ :: TVar a -> (a -> a) -> STM ()
 modifyTVar_ v f = readTVar v >>= \a -> writeTVar v $! f a
