@@ -1,5 +1,5 @@
 name:                resource-pool
-version:             0.2.1.1
+version:             0.2.2.0
 synopsis:            A high-performance striped resource pooling implementation
 description:
   A high-performance striped pooling abstraction for managing
@@ -10,7 +10,8 @@ homepage:            http://github.com/bos/pool
 license:             BSD3
 license-file:        LICENSE
 author:              Bryan O'Sullivan <bos@serpentine.com>
-maintainer:          Bryan O'Sullivan <bos@serpentine.com>
+maintainer:          Bryan O'Sullivan <bos@serpentine.com>,
+                     Bas van Dijk <v.dijk.bas@gmail.com>
 copyright:           Copyright 2011 MailRank, Inc.
 category:            Data, Database, Network
 build-type:          Simple
@@ -25,10 +26,10 @@ flag developer
   manual: True
 
 library
-  exposed-modules:     
+  exposed-modules:
     Data.Pool
-  
-  build-depends:       
+
+  build-depends:
     base >= 4.4,
     hashable,
     monad-control >= 0.2.0.1,

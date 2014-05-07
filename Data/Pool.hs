@@ -12,7 +12,8 @@
 -- Module:      Data.Pool
 -- Copyright:   (c) 2011 MailRank, Inc.
 -- License:     BSD3
--- Maintainer:  Bryan O'Sullivan <bos@serpentine.com>
+-- Maintainer:  Bryan O'Sullivan <bos@serpentine.com>,
+--              Bas van Dijk <v.dijk.bas@gmail.com>
 -- Stability:   experimental
 -- Portability: portable
 --
