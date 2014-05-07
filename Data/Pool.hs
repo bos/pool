@@ -21,11 +21,11 @@
 -- connections.
 --
 -- \"Striped\" means that a single 'Pool' consists of several
--- sub-pools, each managed independently.  A stripe size of 1 is fine
--- for many applications, and probably what you should choose by
--- default.  Larger stripe sizes will lead to reduced contention in
--- high-performance multicore applications, at a trade-off of causing
--- the maximum number of simultaneous resources in use to grow.
+-- sub-pools, each managed independently.  A single stripe is fine for
+-- many applications, and probably what you should choose by default.
+-- More stripes will lead to reduced contention in high-performance
+-- multicore applications, at a trade-off of causing the maximum
+-- number of simultaneous resources in use to grow.
 module Data.Pool
     (
       Pool(idleTime, maxResources, numStripes)
@@ -94,7 +94,7 @@ data Pool a = Pool {
     , destroy :: a -> IO ()
     -- ^ Action for destroying an entry that is now done with.
     , numStripes :: Int
-    -- ^ Stripe count.  The number of distinct sub-pools to maintain.
+    -- ^ The number of stripes (distinct sub-pools) to maintain.
     -- The smallest acceptable value is 1.
     , idleTime :: NominalDiffTime
     -- ^ Amount of time for which an unused resource is kept alive.
@@ -132,7 +132,7 @@ createPool
     -> (a -> IO ())
     -- ^ Action that destroys an existing resource.
     -> Int
-    -- ^ Stripe count.  The number of distinct sub-pools to maintain.
+    -- ^ The number of stripes (distinct sub-pools) to maintain.
     -- The smallest acceptable value is 1.
     -> NominalDiffTime
     -- ^ Amount of time for which an unused resource is kept open.
