@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables, RankNTypes #-}
+{-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables, RankNTypes, DeriveDataTypeable #-}
 
 #if MIN_VERSION_monad_control(0,3,0)
 {-# LANGUAGE FlexibleContexts #-}
@@ -50,6 +50,7 @@ import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import Data.Typeable (Typeable)
 import GHC.Conc.Sync (labelThread)
 import qualified Control.Exception as E
 import qualified Data.Vector as V
@@ -87,7 +88,7 @@ data LocalPool a = LocalPool {
     -- ^ Idle entries.
     , lfin :: IORef ()
     -- ^ empty value used to attach a finalizer to (internal)
-    }
+    } deriving (Typeable)
 
 data Pool a = Pool {
       create :: IO a
@@ -114,7 +115,7 @@ data Pool a = Pool {
     -- ^ Per-capability resource pools.
     , fin :: IORef ()
     -- ^ empty value used to attach a finalizer to (internal)
-    }
+    } deriving (Typeable)
 
 instance Show (Pool a) where
     show Pool{..} = "Pool {numStripes = " ++ show numStripes ++ ", " ++
