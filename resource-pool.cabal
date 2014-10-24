@@ -35,7 +35,7 @@ library
     monad-control >= 0.2.0.1,
     transformers,
     transformers-base >= 0.4,
-    stm,
+    stm >= 2.3,
     time,
     vector >= 0.7
 
