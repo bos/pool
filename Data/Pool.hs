@@ -294,7 +294,7 @@ takeResource pool@Pool{..} = do
 -- be taken from the pool /without blocking/. Otherwise, 'tryWithResource'
 -- returns immediately with 'Nothing' (ie. the action function is /not/ called).
 -- Conversely, if a resource can be borrowed from the pool without blocking, the
--- action is performed and it's result is returned, wrapped in a 'Just'.
+-- action is performed and its result is returned, wrapped in a 'Just'.
 tryWithResource ::
 #if MIN_VERSION_monad_control(0,3,0)
     (MonadBaseControl IO m)
