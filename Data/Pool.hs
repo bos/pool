@@ -295,7 +295,7 @@ takeResource pool@Pool{..} = do
 -- returns immediately with 'Nothing' (ie. the action function is /not/ called).
 -- Conversely, if a resource can be borrowed from the pool without blocking, the
 -- action is performed and it's result is returned, wrapped in a 'Just'.
-tryWithResource ::
+tryWithResource :: forall m a b.
 #if MIN_VERSION_monad_control(0,3,0)
     (MonadBaseControl IO m)
 #else
@@ -310,7 +310,7 @@ tryWithResource pool act = control $ \runInIO -> mask $ \restore -> do
                 destroyResource pool local resource
       putResource local resource
       return ret
-    Nothing -> restore . runInIO $ return Nothing
+    Nothing -> restore . runInIO $ return (Nothing :: Maybe b)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE tryWithResource #-}
 #endif
