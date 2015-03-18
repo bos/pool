@@ -87,16 +87,23 @@ data Entry a = Entry {
 -- | Stats for a single 'LocalPool'.
 data PoolStats = PoolStats {
       highwaterUsage :: Int
+    -- ^ Highest usage since last reset.
     , currentUsage   :: Int
+    -- ^ Current number of items.
     , takes          :: Int
+    -- ^ Number of takes since last reset.
     , creates        :: Int
+    -- ^ Number of cretes since last reset.
     , createFailures :: Int
+    -- ^ Number of creation failures since last reset.
 } deriving (Show)
 
 -- | Pool-wide stats.
 data Stats = Stats {
       perStripe :: V.Vector PoolStats
+     -- ^ Stats per 'LocalPool' (stripe).
     , poolStats :: PoolStats
+     -- ^ Aggregate stats across pool.
 } deriving (Show)
 
 -- | A single striped pool.
