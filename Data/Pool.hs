@@ -93,7 +93,7 @@ data PoolStats = PoolStats {
     , takes          :: Int
     -- ^ Number of takes since last reset.
     , creates        :: Int
-    -- ^ Number of cretes since last reset.
+    -- ^ Number of creates since last reset.
     , createFailures :: Int
     -- ^ Number of creation failures since last reset.
 } deriving (Show)
