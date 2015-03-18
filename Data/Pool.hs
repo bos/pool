@@ -31,6 +31,8 @@ module Data.Pool
     (
       Pool(idleTime, maxResources, numStripes)
     , LocalPool
+    , Stats(..)
+    , PoolStats(..)
     , createPool
     , withResource
     , takeResource
@@ -39,13 +41,14 @@ module Data.Pool
     , destroyResource
     , putResource
     , destroyAllResources
+    , stats
     ) where
 
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, onException, mask_)
-import Control.Monad (forM_, forever, join, liftM3, unless, when)
+import Control.Monad (forM_, forever, join, liftM5, unless, when)
 import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
@@ -80,12 +83,43 @@ data Entry a = Entry {
     -- ^ Time of last return.
     }
 
+
+-- | Stats for a single 'LocalPool'.
+data PoolStats = PoolStats {
+      highwaterUsage :: Int
+    -- ^ Highest usage since last reset.
+    , currentUsage   :: Int
+    -- ^ Current number of items.
+    , takes          :: Int
+    -- ^ Number of takes since last reset.
+    , creates        :: Int
+    -- ^ Number of creates since last reset.
+    , createFailures :: Int
+    -- ^ Number of creation failures since last reset.
+} deriving (Show)
+
+-- | Pool-wide stats.
+data Stats = Stats {
+      perStripe :: V.Vector PoolStats
+     -- ^ Stats per 'LocalPool' (stripe).
+    , poolStats :: PoolStats
+     -- ^ Aggregate stats across pool.
+} deriving (Show)
+
 -- | A single striped pool.
 data LocalPool a = LocalPool {
       inUse :: TVar Int
     -- ^ Count of open entries (both idle and in use).
     , entries :: TVar [Entry a]
     -- ^ Idle entries.
+    , highwaterVar :: TVar Int
+    -- ^ Highest value of 'inUse' since last reset.
+    , takeVar :: TVar Int
+    -- ^ Number of takes since last reset.
+    , createVar :: TVar Int
+    -- ^ Number of creates since last reset.
+    , createFailureVar :: TVar Int
+    -- ^ Number of create failures since last reset.
     , lfin :: IORef ()
     -- ^ empty value used to attach a finalizer to (internal)
     } deriving (Typeable)
@@ -159,7 +193,7 @@ createPool create destroy numStripes idleTime maxResources = do
   when (maxResources < 1) $
     modError "pool " $ "invalid maximum resource count " ++ show maxResources
   localPools <- V.replicateM numStripes $
-                liftM3 LocalPool (newTVarIO 0) (newTVarIO []) (newIORef ())
+                LocalPool <$> newTVarIO 0 <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO 0 <*> newTVarIO 0 <*> newTVarIO 0 <*> newIORef ()
   reaperId <- forkIOLabeledWithUnmask "resource-pool: reaper" $ \unmask ->
                 unmask $ reaper destroy idleTime localPools
   fin <- newIORef ()
@@ -276,6 +310,7 @@ takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool@Pool{..} = do
   local@LocalPool{..} <- getLocalPool pool
   resource <- liftBase . join . atomically $ do
+    modifyTVar_ takeVar (+ 1)
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return entry)
@@ -283,8 +318,10 @@ takeResource pool@Pool{..} = do
         used <- readTVar inUse
         when (used == maxResources) retry
         writeTVar inUse $! used + 1
+        modifyTVar_ highwaterVar (`max` (used + 1))
+        modifyTVar_ createVar (+ 1)
         return $
-          create `onException` atomically (modifyTVar_ inUse (subtract 1))
+          create `onException` atomically (modifyTVar_ createFailureVar (+ 1) >> modifyTVar_ inUse (subtract 1))
   return (resource, local)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE takeResource #-}
@@ -384,6 +421,22 @@ putResource LocalPool{..} resource = do
 -- freeing up those resources sooner.
 destroyAllResources :: Pool a -> IO ()
 destroyAllResources Pool{..} = V.forM_ localPools $ purgeLocalPool destroy
+
+-- | @stats pool reset@ returns statistics on each 'LocalPool' as well as a summary across the entire Pool.
+-- When @reset@ is true, the stats are reset.
+stats :: Pool a -> Bool -> IO Stats
+stats Pool{..} reset = do 
+  let stripeStats LocalPool{..} = atomically $ do
+                                    s <- liftM5 PoolStats (readTVar highwaterVar) (readTVar inUse) (readTVar takeVar) (readTVar createVar) (readTVar createFailureVar)
+                                    when reset $ do
+                                                 mapM_ (\v -> writeTVar v 0) [takeVar, createVar, createFailureVar] 
+                                                 writeTVar highwaterVar $! currentUsage s
+                                    return s
+
+  per <- V.mapM stripeStats localPools
+  let poolWide = V.foldr merge (PoolStats 0 0 0 0 0) per
+      merge (PoolStats hw1 cu1 t1 c1 f1) (PoolStats hw2 cu2 t2 c2 f2) = PoolStats (hw1 + hw2) (cu1 + cu2) (t1 + t2) (c1 + c2) (f1 + f2)
+  return $ Stats per poolWide
 
 modifyTVar_ :: TVar a -> (a -> a) -> STM ()
 modifyTVar_ v f = readTVar v >>= \a -> writeTVar v $! f a
