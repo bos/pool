@@ -275,7 +275,7 @@ withResource pool act = control $ \runInIO -> mask $ \restore -> do
 takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool@Pool{..} = do
   local@LocalPool{..} <- getLocalPool pool
-  resource <- liftBase . join . atomically $ do
+  resource <- join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return entry)
