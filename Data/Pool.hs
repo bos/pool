@@ -57,7 +57,6 @@ import qualified Data.Vector as V
 
 #if MIN_VERSION_monad_control(0,3,0)
 import Control.Monad.Trans.Control (MonadBaseControl, control)
-import Control.Monad.Base (liftBase)
 #else
 import Control.Monad.IO.Control (MonadControlIO, controlIO)
 import Control.Monad.IO.Class (liftIO)
@@ -321,7 +320,7 @@ tryWithResource pool act = control $ \runInIO -> mask $ \restore -> do
 tryTakeResource :: Pool a -> IO (Maybe (a, LocalPool a))
 tryTakeResource pool@Pool{..} = do
   local@LocalPool{..} <- getLocalPool pool
-  resource <- liftBase . join . atomically $ do
+  resource <- join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return . Just $ entry)
@@ -343,7 +342,7 @@ tryTakeResource pool@Pool{..} = do
 -- Internal, just to not repeat code for 'takeResource' and 'tryTakeResource'
 getLocalPool :: Pool a -> IO (LocalPool a)
 getLocalPool Pool{..} = do
-  i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
+  i <- (`mod` numStripes) . hash <$> myThreadId
   return $ localPools V.! i
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE getLocalPool #-}
