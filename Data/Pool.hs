@@ -257,9 +257,8 @@ withResource ::
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
 withResource pool act = control $ \runInIO -> mask $ \restore -> do
   (resource, local) <- takeResource pool
-  ret <- restore (runInIO (act resource)) `onException`
+  ret <- restore (runInIO (act resource) <* putResource local resource) `onException`
             destroyResource pool local resource
-  putResource local resource
   return ret
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE withResource #-}
