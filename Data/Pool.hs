@@ -30,7 +30,7 @@
 module Data.Pool
     (
       Pool(idleTime, maxResources, numStripes)
-    , LocalPool
+    , LocalPool(inUse, entries)
     , createPool
     , withResource
     , takeResource
