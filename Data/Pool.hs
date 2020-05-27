@@ -35,7 +35,9 @@ module Data.Pool
     , withResource
     , takeResource
     , tryWithResource
+    , tryWithCreatedResource
     , tryTakeResource
+    , tryTakeCreatedResource
     , destroyResource
     , putResource
     , destroyAllResources
@@ -336,6 +338,51 @@ tryTakeResource pool@Pool{..} = do
   return $ (flip (,) local) <$> resource
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE tryTakeResource #-}
+#endif
+
+-- | A non-blocking version of 'takeResource' that does not create a new
+-- resource if a resource is not available (useful for keep-alive
+-- functionality). The 'tryTakeCreatedResource' function returns
+-- immediately, with 'Nothing' if the pool is exhausted, or @'Just' (a,
+-- 'LocalPool' a)@ if a resource could be borrowed from the pool
+-- successfully.
+tryTakeCreatedResource :: Pool a -> IO (Maybe (a, LocalPool a))
+tryTakeCreatedResource pool@Pool{..} = do
+  local@LocalPool{..} <- getLocalPool pool
+  resource <- liftBase . join . atomically $ do
+    ents <- readTVar entries
+    case ents of
+      (Entry{..}:es) -> writeTVar entries es >> return (return . Just $ entry)
+      [] -> return (return Nothing)
+  return $ (flip (,) local) <$> resource
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE tryTakeCreatedResource #-}
+#endif
+
+-- | Similar to 'withResource', but only performs the action if a resource could
+-- be taken from the pool /without blocking or creating/. Otherwise,
+-- 'tryWithCreatedResource' returns immediately with 'Nothing' (ie. the action
+-- function is /not/ called).  Conversely, if a resource can be borrowed from
+-- the pool without blocking or creating, the action is performed and it's
+-- result is returned, wrapped in a 'Just'.
+tryWithCreatedResource :: forall m a b.
+#if MIN_VERSION_monad_control(0,3,0)
+    (MonadBaseControl IO m)
+#else
+    (MonadControlIO m)
+#endif
+  => Pool a -> (a -> m b) -> m (Maybe b)
+tryWithCreatedResource pool act = control $ \runInIO -> mask $ \restore -> do
+  res <- tryTakeCreatedResource pool
+  case res of
+    Just (resource, local) -> do
+      ret <- restore (runInIO (Just <$> act resource)) `onException`
+                destroyResource pool local resource
+      putResource local resource
+      return ret
+    Nothing -> restore . runInIO $ return (Nothing :: Maybe b)
+#if __GLASGOW_HASKELL__ >= 700
+{-# INLINABLE tryWithCreatedResource #-}
 #endif
 
 -- | Get a (Thread-)'LocalPool'
