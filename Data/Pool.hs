@@ -30,6 +30,7 @@
 module Data.Pool
     (
       Pool(idleTime, maxResources, numStripes)
+    , getInUseResourceCount
     , LocalPool
     , createPool
     , withResource
@@ -41,12 +42,13 @@ module Data.Pool
     , destroyAllResources
     ) where
 
-import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, onException, mask_)
 import Control.Monad (forM_, forever, join, liftM3, unless, when)
+import Data.Foldable (foldMap')
 import Data.Hashable (hash)
+import Data.Monoid (Sum(..))
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
@@ -391,3 +393,9 @@ modifyTVar_ v f = readTVar v >>= \a -> writeTVar v $! f a
 modError :: String -> String -> a
 modError func msg =
     error $ "Data.Pool." ++ func ++ ": " ++ msg
+
+getInUseResourceCount :: Pool a -> IO Int
+getInUseResourceCount Pool{..} =
+  -- We aren't transactionally computing the sum across all local pools to
+  -- avoid contention with takeResource/withResource
+  getSum <$> foldMap' (atomically . fmap Sum . readTVar . inUse) localPools
