@@ -248,7 +248,7 @@ withResource pool act = withRunInIO $ \runInIO -> mask $ \restore -> do
 takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool@Pool{..} = do
   local@LocalPool{..} <- getLocalPool pool
-  resource <- liftBase . join . atomically $ do
+  resource <- join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return entry)
@@ -288,7 +288,7 @@ tryWithResource pool act = withRunInIO $ \runInIO -> mask $ \restore -> do
 tryTakeResource :: Pool a -> IO (Maybe (a, LocalPool a))
 tryTakeResource pool@Pool{..} = do
   local@LocalPool{..} <- getLocalPool pool
-  resource <- liftBase . join . atomically $ do
+  resource <- join . atomically $ do
     ents <- readTVar entries
     case ents of
       (Entry{..}:es) -> writeTVar entries es >> return (return . Just $ entry)
@@ -310,7 +310,7 @@ tryTakeResource pool@Pool{..} = do
 -- Internal, just to not repeat code for 'takeResource' and 'tryTakeResource'
 getLocalPool :: Pool a -> IO (LocalPool a)
 getLocalPool Pool{..} = do
-  i <- liftBase $ ((`mod` numStripes) . hash) <$> myThreadId
+  i <- ((`mod` numStripes) . hash) <$> myThreadId
   return $ localPools V.! i
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE getLocalPool #-}
