@@ -1,9 +1,5 @@
 {-# LANGUAGE CPP, NamedFieldPuns, RecordWildCards, ScopedTypeVariables, RankNTypes, DeriveDataTypeable #-}
 
-#if MIN_VERSION_monad_control(0,3,0)
-{-# LANGUAGE FlexibleContexts #-}
-#endif
-
 #if !MIN_VERSION_base(4,3,0)
 {-# LANGUAGE RankNTypes #-}
 #endif
@@ -54,24 +50,7 @@ import Data.Typeable (Typeable)
 import GHC.Conc.Sync (labelThread)
 import qualified Control.Exception as E
 import qualified Data.Vector as V
-
-#if MIN_VERSION_monad_control(0,3,0)
-import Control.Monad.Trans.Control (MonadBaseControl, control)
-import Control.Monad.Base (liftBase)
-#else
-import Control.Monad.IO.Control (MonadControlIO, controlIO)
-import Control.Monad.IO.Class (liftIO)
-#define control controlIO
-#define liftBase liftIO
-#endif
-
-#if MIN_VERSION_base(4,3,0)
-import Control.Exception (mask)
-#else
--- Don't do any async exception protection for older GHCs.
-mask :: ((forall a. IO a -> IO a) -> IO b) -> IO b
-mask f = f id
-#endif
+import UnliftIO (MonadUnliftIO, mask, withRunInIO)
 
 -- | A single resource pool entry.
 data Entry a = Entry {
@@ -247,15 +226,9 @@ purgeLocalPool destroy LocalPool{..} = do
 -- destroy a pooled resource, as doing so will almost certainly cause
 -- a subsequent user (who expects the resource to be valid) to throw
 -- an exception.
-withResource ::
-#if MIN_VERSION_monad_control(0,3,0)
-    (MonadBaseControl IO m)
-#else
-    (MonadControlIO m)
-#endif
-  => Pool a -> (a -> m b) -> m b
+withResource :: MonadUnliftIO m => Pool a -> (a -> m b) -> m b
 {-# SPECIALIZE withResource :: Pool a -> (a -> IO b) -> IO b #-}
-withResource pool act = control $ \runInIO -> mask $ \restore -> do
+withResource pool act = withRunInIO $ \runInIO -> mask $ \restore -> do
   (resource, local) <- takeResource pool
   ret <- restore (runInIO (act resource)) `onException`
             destroyResource pool local resource
@@ -295,14 +268,8 @@ takeResource pool@Pool{..} = do
 -- returns immediately with 'Nothing' (ie. the action function is /not/ called).
 -- Conversely, if a resource can be borrowed from the pool without blocking, the
 -- action is performed and it's result is returned, wrapped in a 'Just'.
-tryWithResource :: forall m a b.
-#if MIN_VERSION_monad_control(0,3,0)
-    (MonadBaseControl IO m)
-#else
-    (MonadControlIO m)
-#endif
-  => Pool a -> (a -> m b) -> m (Maybe b)
-tryWithResource pool act = control $ \runInIO -> mask $ \restore -> do
+tryWithResource :: forall m a b. MonadUnliftIO m => Pool a -> (a -> m b) -> m (Maybe b)
+tryWithResource pool act = withRunInIO $ \runInIO -> mask $ \restore -> do
   res <- tryTakeResource pool
   case res of
     Just (resource, local) -> do
