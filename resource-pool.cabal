@@ -46,6 +46,16 @@ library
 
   ghc-options: -Wall
 
+test-suite resource-pool-tests
+  ghc-options: -threaded -rtsopts
+  type: exitcode-stdio-1.0
+  build-depends:
+      base
+    , hspec
+    , resource-pool
+  hs-source-dirs: test
+  main-is: Main.hs
+
 source-repository head
   type:     git
   location: http://github.com/bos/pool
