@@ -1,3 +1,14 @@
+# Hasura fork
+
+This is a fork of the package
+[resource-pool](https://hackage.haskell.org/package/resource-pool)
+with the following changes:
+
+- `createPool'` allows setting a timeout on resource acquisition.
+- `getInUseResourceCount` counts the number of resources in use.
+
+---
+
 # Welcome to pool
 
 pool is a fast Haskell library for managing medium-lifetime pooled
