@@ -331,6 +331,8 @@ takeResource pool@Pool{..} = do
             writeTVar inUse $! used + 1
             return $
               create `onException` atomically (modifyTVar_ inUse (subtract 1))
+  -- Note: We'll miss unregistering the timeout on exception, but it will be
+  -- unregistered automatically after the given time has passed.
   Event.unregisterTimeout mgr timeoutKey
   return (resource, local)
   where
