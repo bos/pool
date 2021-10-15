@@ -45,10 +45,11 @@ import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, onException, mask_)
-import Control.Monad (forM_, forever, join, liftM3, unless, when)
+import Control.Monad (forM_, forever, join, liftM4, unless, when)
 import Data.Hashable (hash)
 import Data.IORef (IORef, newIORef, mkWeakIORef)
 import Data.List (partition)
+import Data.Pool.WaiterQueue (WaiterQueue, newQueueIO, push, pop)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Data.Typeable (Typeable)
 import GHC.Conc.Sync (labelThread)
@@ -86,6 +87,8 @@ data LocalPool a = LocalPool {
     -- ^ Count of open entries (both idle and in use).
     , entries :: TVar [Entry a]
     -- ^ Idle entries.
+    , waiters :: WaiterQueue (TMVar (Entry a))
+    -- ^ threads waiting for a resource
     , lfin :: IORef ()
     -- ^ empty value used to attach a finalizer to (internal)
     } deriving (Typeable)
@@ -159,7 +162,7 @@ createPool create destroy numStripes idleTime maxResources = do
   when (maxResources < 1) $
     modError "pool " $ "invalid maximum resource count " ++ show maxResources
   localPools <- V.replicateM numStripes $
-                liftM3 LocalPool (newTVarIO 0) (newTVarIO []) (newIORef ())
+                liftM4 LocalPool (newTVarIO 0) (newTVarIO []) newQueueIO (newIORef ())
   reaperId <- forkIOLabeledWithUnmask "resource-pool: reaper" $ \unmask ->
                 unmask $ reaper destroy idleTime localPools
   fin <- newIORef ()
@@ -281,10 +284,21 @@ takeResource pool@Pool{..} = do
       (Entry{..}:es) -> writeTVar entries es >> return (return entry)
       [] -> do
         used <- readTVar inUse
-        when (used == maxResources) retry
-        writeTVar inUse $! used + 1
-        return $
-          create `onException` atomically (modifyTVar_ inUse (subtract 1))
+        case used == maxResources of
+          False -> do
+            writeTVar inUse $! used + 1
+            return $
+              create `onException` atomically (modifyTVar_ inUse (subtract 1))
+          True -> do
+            var <- newEmptyTMVar
+            removeSelf <- push waiters var
+            let dequeue = atomically $ do
+                  removeSelf
+                  maybeEntry <- tryTakeTMVar var
+                  case maybeEntry of
+                    Nothing -> pure ()
+                    Just v -> putResourceSTM local v
+            return (entry <$> atomically (takeTMVar var) `onException` dequeue)
   return (resource, local)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE takeResource #-}
@@ -361,12 +375,20 @@ destroyResource Pool{..} LocalPool{..} resource = do
 
 -- | Return a resource to the given 'LocalPool'.
 putResource :: LocalPool a -> a -> IO ()
-putResource LocalPool{..} resource = do
+putResource lp resource = do
     now <- getCurrentTime
-    atomically $ modifyTVar_ entries (Entry resource now:)
+    atomically $ putResourceSTM lp (Entry resource now)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE putResource #-}
 #endif
+
+putResourceSTM :: LocalPool a -> Entry a -> STM ()
+putResourceSTM LocalPool{..} resourceEntry = do
+    mWaiters <- pop waiters
+    case mWaiters of
+      Nothing -> modifyTVar_ entries (resourceEntry:)
+      Just w -> putTMVar w resourceEntry
+{-# INLINE putResourceSTM #-}
 
 -- | Destroy all resources in all stripes in the pool. Note that this
 -- will ignore any exceptions in the destroy function.

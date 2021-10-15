@@ -28,6 +28,7 @@ flag developer
 library
   exposed-modules:
     Data.Pool
+  other-modules: Data.Pool.WaiterQueue
 
   build-depends:
     base >= 4.4 && < 5,
