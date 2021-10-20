@@ -87,7 +87,7 @@ data LocalPool a = LocalPool {
     -- ^ Count of open entries (both idle and in use).
     , entries :: TVar [Entry a]
     -- ^ Idle entries.
-    , waiters :: WaiterQueue (TMVar (Entry a))
+    , waiters :: WaiterQueue (TMVar (Maybe (Entry a)))
     -- ^ threads waiting for a resource
     , lfin :: IORef ()
     -- ^ empty value used to attach a finalizer to (internal)
@@ -288,17 +288,22 @@ takeResource pool@Pool{..} = do
           False -> do
             writeTVar inUse $! used + 1
             return $
-              create `onException` atomically (modifyTVar_ inUse (subtract 1))
+              create `onException` atomically (destroyResourceSTM local)
           True -> do
             var <- newEmptyTMVar
             removeSelf <- push waiters var
-            let dequeue = atomically $ do
-                  removeSelf
-                  maybeEntry <- tryTakeTMVar var
-                  case maybeEntry of
+            let getResource x = case x of
+                  Just y -> pure (entry y)
+                  Nothing -> create `onException` atomically (destroyResourceSTM local)
+            let dequeue = do
+                  maybeEntry <- atomically $ do
+                    removeSelf
+                    tryTakeTMVar var
+                  atomically $ case maybeEntry of
                     Nothing -> pure ()
-                    Just v -> putResourceSTM local v
-            return (entry <$> atomically (takeTMVar var) `onException` dequeue)
+                    Just Nothing -> destroyResourceSTM local
+                    Just (Just v) -> putResourceSTM local v
+            return (getResource =<< atomically (takeTMVar var) `onException` dequeue)
   return (resource, local)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE takeResource #-}
@@ -346,7 +351,7 @@ tryTakeResource pool@Pool{..} = do
           else do
             writeTVar inUse $! used + 1
             return $ Just <$>
-              create `onException` atomically (modifyTVar_ inUse (subtract 1))
+              create `onException` atomically (destroyResourceSTM local)
   return $ (flip (,) local) <$> resource
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE tryTakeResource #-}
@@ -366,9 +371,9 @@ getLocalPool Pool{..} = do
 -- | Destroy a resource. Note that this will ignore any exceptions in the
 -- destroy function.
 destroyResource :: Pool a -> LocalPool a -> a -> IO ()
-destroyResource Pool{..} LocalPool{..} resource = do
+destroyResource Pool{..} local resource = do
    destroy resource `E.catch` \(_::SomeException) -> return ()
-   atomically (modifyTVar_ inUse (subtract 1))
+   atomically (destroyResourceSTM local)
 #if __GLASGOW_HASKELL__ >= 700
 {-# INLINABLE destroyResource #-}
 #endif
@@ -387,8 +392,16 @@ putResourceSTM LocalPool{..} resourceEntry = do
     mWaiters <- pop waiters
     case mWaiters of
       Nothing -> modifyTVar_ entries (resourceEntry:)
-      Just w -> putTMVar w resourceEntry
+      Just w -> putTMVar w (Just resourceEntry)
 {-# INLINE putResourceSTM #-}
+
+destroyResourceSTM :: LocalPool a -> STM ()
+destroyResourceSTM LocalPool{..} = do
+  mwaiter <- pop waiters
+  case mwaiter of
+    Nothing -> modifyTVar_ inUse (subtract 1)
+    Just w -> putTMVar w Nothing
+{-# INLINE destroyResourceSTM #-}
 
 -- | Destroy all resources in all stripes in the pool. Note that this
 -- will ignore any exceptions in the destroy function.
