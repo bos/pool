@@ -61,15 +61,20 @@ takeResource pool = mask_ $ do
     then do
       q <- newEmptyMVar
       putMVar mstripe $! stripe { queueR = q : queueR stripe }
-      a <- waitForResource mstripe q
-      pure (a, localPool)
+      waitForResource mstripe q >>= \case
+        Just a  -> pure (a, localPool)
+        Nothing -> do
+          a <- createResource pool `onException` restoreSize mstripe
+          pure (a, localPool)
     else case cache stripe of
       [] -> do
         putMVar mstripe $! stripe { available = available stripe - 1 }
         a <- createResource pool `onException` restoreSize mstripe
         pure (a, localPool)
       Entry a _ : as -> do
-        putMVar mstripe $! stripe { available = available stripe - 1, cache = as }
+        putMVar mstripe $! stripe { available = available stripe - 1
+                                  , cache = as
+                                  }
         pure (a, localPool)
 
 {-# DEPRECATED createPool "Use newPool instead" #-}

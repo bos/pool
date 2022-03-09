@@ -33,8 +33,8 @@ newtype LocalPool a = LocalPool (MVar (Stripe a))
 data Stripe a = Stripe
   { available :: Int
   , cache     :: [Entry a]
-  , queue     :: [MVar a]
-  , queueR    :: [MVar a]
+  , queue     :: [MVar (Maybe a)]
+  , queueR    :: [MVar (Maybe a)]
   }
 
 -- | An existing resource currently sitting in a pool.
@@ -117,7 +117,8 @@ destroyResource :: Pool a -> LocalPool a -> a -> IO ()
 destroyResource pool (LocalPool mstripe) a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
     stripe <- takeMVar mstripe
-    putMVar mstripe $! stripe { available = available stripe + 1 }
+    newStripe <- signal stripe Nothing
+    putMVar mstripe newStripe
     void . try @SomeException $ freeResource pool a
 
 -- | Return a resource to the given 'LocalPool'.
@@ -125,7 +126,7 @@ putResource :: LocalPool a -> a -> IO ()
 putResource (LocalPool mstripe) a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
     stripe    <- takeMVar mstripe
-    newStripe <- signal stripe a
+    newStripe <- signal stripe (Just a)
     putMVar mstripe newStripe
 
 -- | Destroy all resources in all stripes in the pool.
@@ -163,8 +164,10 @@ data AcquisitionMethod
   -- ^ A new resource was created.
   | Taken
   -- ^ An existing resource was directly taken from the pool.
-  | WaitedFor
-  -- ^ The thread had to wait until a resource was released.
+  | WaitedThen AcquisitionMethod
+  -- ^ The thread had to wait until a resource was released. The inner method
+  -- signifies whether the resource was returned to the pool via 'putResource'
+  -- ('Taken') or 'destroyResource' ('Created').
   deriving (Eq, Show)
 
 ----------------------------------------
@@ -177,17 +180,17 @@ getLocalPool pools = do
   pure $ pools `indexSmallArray` (cid `rem` sizeofSmallArray pools)
 
 -- | Wait for the resource to be put into a given 'MVar'.
-waitForResource :: MVar (Stripe a) -> MVar a -> IO a
+waitForResource :: MVar (Stripe a) -> MVar (Maybe a) -> IO (Maybe a)
 waitForResource mstripe q = takeMVar q `onException` cleanup
   where
     cleanup = uninterruptibleMask_ $ do -- Note [signal uninterruptible]
       stripe    <- takeMVar mstripe
       newStripe <- tryTakeMVar q >>= \case
-        Just a -> do
+        Just ma -> do
           -- Between entering the exception handler and taking ownership of
           -- the stripe we got the resource we wanted. We don't need it
           -- anymore though, so pass it to someone else.
-          signal stripe a
+          signal stripe ma
         Nothing -> do
           -- If we're still waiting, fill up the MVar with an undefined value
           -- so that 'signal' can discard our MVar from the queue.
@@ -195,7 +198,7 @@ waitForResource mstripe q = takeMVar q `onException` cleanup
           pure stripe
       putMVar mstripe newStripe
 
--- | If an exception is received while a resource is created, restore the
+-- | If an exception is received while a resource is being created, restore the
 -- original size of the stripe.
 restoreSize :: MVar (Stripe a) -> IO ()
 restoreSize mstripe = uninterruptibleMask_ $ do
@@ -215,8 +218,8 @@ cleanLocalPools isStale free pools = do
     -- 'stale' resources before they're freed.
     stale <- modifyMVar mstripe $ \stripe -> unmask $ do
       let (stale, fresh) = L.partition isStale (cache stripe)
-          -- There's no need to update 'size' here because it only tracks the
-          -- number of resources taken from the pool.
+          -- There's no need to update 'available' here because it only tracks
+          -- the number of resources taken from the pool.
           newStripe      = stripe { cache = fresh }
       newStripe `seq` pure (newStripe, map entry stale)
     -- We need to ignore exceptions in the 'free' function, otherwise if an
@@ -235,27 +238,37 @@ cleanLocalPools isStale free pools = do
 --   resource. The putResource is masked by bracket, but taking the MVar might
 --   block, and so it would be interruptible. Hence we need an uninterruptible
 --   variant of mask here.
-signal :: Stripe a -> a -> IO (Stripe a)
-signal stripe a = if available stripe == 0
+signal :: Stripe a -> Maybe a -> IO (Stripe a)
+signal stripe ma = if available stripe == 0
   then loop (queue stripe) (queueR stripe)
   else do
-    now <- getMonotonicTime
-    pure
-      $! stripe { available = available stripe + 1, cache = Entry a now : cache stripe }
+    newCache <- case ma of
+      Just a -> do
+        now <- getMonotonicTime
+        pure $ Entry a now : cache stripe
+      Nothing -> pure $ cache stripe
+    pure $! stripe { available = available stripe + 1
+                   , cache = newCache
+                   }
   where
     loop [] [] = do
-      now <- getMonotonicTime
-      pure $! stripe { available = 1
-                     , cache = [Entry a now]
+      newCache <- case ma of
+        Just a -> do
+          now <- getMonotonicTime
+          pure [Entry a now]
+        Nothing -> pure []
+      pure $! Stripe { available = 1
+                     , cache = newCache
                      , queue = []
                      , queueR = []
                      }
     loop []       qR = loop (reverse qR) []
-    loop (q : qs) qR = tryPutMVar q a >>= \case
+    loop (q : qs) qR = tryPutMVar q ma >>= \case
       -- This fails when 'waitForResource' went into the exception handler and
       -- filled the MVar (with an undefined value) itself. In such case we
       -- simply ignore it.
       False -> loop qs qR
       True  -> pure $! stripe { available = 0
-                              , queue = qs, queueR = qR
+                              , queue = qs
+                              , queueR = qR
                               }
