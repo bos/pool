@@ -18,8 +18,29 @@ module Data.Pool.Introspection
 import Control.Concurrent
 import Control.Exception
 import GHC.Clock
+import GHC.Generics (Generic)
 
 import Data.Pool.Internal
+
+-- | A resource taken from the pool along with additional information.
+data Resource a = Resource
+  { resource           :: a
+  , acquisitionTime    :: !Double
+  , acquisitionMethod  :: !AcquisitionMethod
+  , availableResources :: !Int
+  } deriving (Eq, Show, Generic)
+
+-- | Method of acquiring a resource from the pool.
+data AcquisitionMethod
+  = Created
+  -- ^ A new resource was created.
+  | Taken
+  -- ^ An existing resource was directly taken from the pool.
+  | WaitedThen !AcquisitionMethod
+  -- ^ The thread had to wait until a resource was released. The inner method
+  -- signifies whether the resource was returned to the pool via 'putResource'
+  -- ('Taken') or 'destroyResource' ('Created').
+  deriving (Eq, Show, Generic)
 
 -- | 'Data.Pool.withResource' with introspection capabilities.
 withResource :: Pool a -> (Resource a -> IO r) -> IO r

@@ -34,5 +34,6 @@ library
 
   default-language: Haskell2010
 
-  default-extensions: LambdaCase
+  default-extensions: DeriveGeneric
+                    , LambdaCase
                     , TypeApplications

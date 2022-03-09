@@ -153,29 +153,6 @@ destroyAllResources pool = do
   cleanLocalPools (const True) (freeResource pool) (localPools pool)
 
 ----------------------------------------
--- Introspection
-
--- | A resource taken from the pool along with additional information.
-data Resource a = Resource
-  { resource           :: a
-  , acquisitionTime    :: !Double
-  , acquisitionMethod  :: !AcquisitionMethod
-  , availableResources :: !Int
-  }
-
--- | Method of acquiring a resource from the pool.
-data AcquisitionMethod
-  = Created
-  -- ^ A new resource was created.
-  | Taken
-  -- ^ An existing resource was directly taken from the pool.
-  | WaitedThen AcquisitionMethod
-  -- ^ The thread had to wait until a resource was released. The inner method
-  -- signifies whether the resource was returned to the pool via 'putResource'
-  -- ('Taken') or 'destroyResource' ('Created').
-  deriving (Eq, Show)
-
-----------------------------------------
 -- Helpers
 
 -- | Get a capability-local pool.
