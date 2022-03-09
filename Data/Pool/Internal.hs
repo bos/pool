@@ -19,10 +19,10 @@ import qualified Data.List as L
 -- so that they never compete over access to the same stripe. This results in a
 -- very good performance in a multi-threaded environment.
 data Pool a = Pool
-  { createResource :: IO a
-  , freeResource   :: a -> IO ()
-  , localPools     :: SmallArray (LocalPool a)
-  , reaperRef      :: IORef ()
+  { createResource :: !(IO a)
+  , freeResource   :: !(a -> IO ())
+  , localPools     :: !(SmallArray (LocalPool a))
+  , reaperRef      :: !(IORef ())
   }
 
 -- | A single, capability-local pool.
@@ -31,17 +31,22 @@ newtype LocalPool a = LocalPool (MVar (Stripe a))
 -- | Stripe of a resource pool. If @available@ is 0, the list of threads waiting
 -- for a resource (each with an associated 'MVar') is @queue ++ reverse queueR@.
 data Stripe a = Stripe
-  { available :: Int
-  , cache     :: [Entry a]
-  , queue     :: [MVar (Maybe a)]
-  , queueR    :: [MVar (Maybe a)]
+  { available :: !Int
+  , cache     :: ![Entry a]
+  , queue     :: !(Queue a)
+  , queueR    :: !(Queue a)
   }
 
 -- | An existing resource currently sitting in a pool.
 data Entry a = Entry
   { entry    :: a
-  , lastUsed :: Double
+  , lastUsed :: !Double
   }
+
+-- | A queue of MVarS corresponding to threads waiting for resources.
+--
+-- Basically a monomorphic list to save two pointer indirections.
+data Queue a = Queue !(MVar (Maybe a)) (Queue a) | Empty
 
 -- | Create a new striped resource pool.
 --
@@ -83,8 +88,8 @@ newPool create free idleTime maxResources = do
     . newMVar
     $ Stripe { available = maxResources `quotCeil` numStripes
              , cache     = []
-             , queue     = []
-             , queueR    = []
+             , queue     = Empty
+             , queueR    = Empty
              }
   mask_ $ do
     ref        <- newIORef ()
@@ -153,9 +158,9 @@ destroyAllResources pool = do
 -- | A resource taken from the pool along with additional information.
 data Resource a = Resource
   { resource           :: a
-  , acquisitionTime    :: Double
-  , acquisitionMethod  :: AcquisitionMethod
-  , availableResources :: Int
+  , acquisitionTime    :: !Double
+  , acquisitionMethod  :: !AcquisitionMethod
+  , availableResources :: !Int
   }
 
 -- | Method of acquiring a resource from the pool.
@@ -251,7 +256,7 @@ signal stripe ma = if available stripe == 0
                    , cache = newCache
                    }
   where
-    loop [] [] = do
+    loop Empty Empty = do
       newCache <- case ma of
         Just a -> do
           now <- getMonotonicTime
@@ -259,11 +264,11 @@ signal stripe ma = if available stripe == 0
         Nothing -> pure []
       pure $! Stripe { available = 1
                      , cache = newCache
-                     , queue = []
-                     , queueR = []
+                     , queue = Empty
+                     , queueR = Empty
                      }
-    loop []       qR = loop (reverse qR) []
-    loop (q : qs) qR = tryPutMVar q ma >>= \case
+    loop Empty        qR = loop (reverseQueue qR) Empty
+    loop (Queue q qs) qR = tryPutMVar q ma >>= \case
       -- This fails when 'waitForResource' went into the exception handler and
       -- filled the MVar (with an undefined value) itself. In such case we
       -- simply ignore it.
@@ -272,3 +277,10 @@ signal stripe ma = if available stripe == 0
                               , queue = qs
                               , queueR = qR
                               }
+
+reverseQueue :: Queue a -> Queue a
+reverseQueue = go Empty
+  where
+    go acc = \case
+      Empty      -> acc
+      Queue x xs -> go (Queue x acc) xs

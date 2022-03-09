@@ -60,7 +60,7 @@ takeResource pool = mask_ $ do
   if available stripe == 0
     then do
       q <- newEmptyMVar
-      putMVar mstripe $! stripe { queueR = q : queueR stripe }
+      putMVar mstripe $! stripe { queueR = Queue q (queueR stripe) }
       waitForResource mstripe q >>= \case
         Just a  -> pure (a, localPool)
         Nothing -> do
