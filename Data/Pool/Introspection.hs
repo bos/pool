@@ -25,6 +25,7 @@ import Data.Pool.Internal
 -- | A resource taken from the pool along with additional information.
 data Resource a = Resource
   { resource           :: a
+  , stripeNumber       :: !Int
   , acquisitionTime    :: !Double
   , acquisitionMethod  :: !AcquisitionMethod
   , availableResources :: !Int
@@ -54,7 +55,7 @@ withResource pool act = mask $ \unmask -> do
 takeResource :: Pool a -> IO (Resource a, LocalPool a)
 takeResource pool = mask_ $ do
   t1 <- getMonotonicTime
-  localPool@(LocalPool mstripe) <- getLocalPool (localPools pool)
+  localPool@(LocalPool n mstripe) <- getLocalPool (localPools pool)
   stripe <- takeMVar mstripe
   if available stripe == 0
     then do
@@ -63,20 +64,20 @@ takeResource pool = mask_ $ do
       waitForResource mstripe q >>= \case
         Just a -> do
           t2 <- getMonotonicTime
-          pure (Resource a (t2 - t1) (WaitedThen Taken) 0, localPool)
+          pure (Resource a n (t2 - t1) (WaitedThen Taken) 0, localPool)
         Nothing -> do
           a  <- createResource pool `onException` restoreSize mstripe
           t2 <- getMonotonicTime
-          pure (Resource a (t2 - t1) (WaitedThen Created) 0, localPool)
+          pure (Resource a n (t2 - t1) (WaitedThen Created) 0, localPool)
     else case cache stripe of
       [] -> do
         let newAvailable = available stripe - 1
         putMVar mstripe $! stripe { available = newAvailable }
         a  <- createResource pool `onException` restoreSize mstripe
         t2 <- getMonotonicTime
-        pure (Resource a (t2 - t1) Created newAvailable, localPool)
+        pure (Resource a n (t2 - t1) Created newAvailable, localPool)
       Entry a _ : as -> do
         let newAvailable = available stripe - 1
         putMVar mstripe $! stripe { available = newAvailable, cache = as }
         t2 <- getMonotonicTime
-        pure (Resource a (t2 - t1) Taken newAvailable, localPool)
+        pure (Resource a n (t2 - t1) Taken newAvailable, localPool)

@@ -55,7 +55,7 @@ withResource pool act = mask $ \unmask -> do
 -- to the pool (via 'putResource').
 takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool = mask_ $ do
-  localPool@(LocalPool mstripe) <- getLocalPool (localPools pool)
+  localPool@(LocalPool _ mstripe) <- getLocalPool (localPools pool)
   stripe <- takeMVar mstripe
   if available stripe == 0
     then do

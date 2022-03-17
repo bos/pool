@@ -26,7 +26,7 @@ data Pool a = Pool
   }
 
 -- | A single, capability-local pool.
-newtype LocalPool a = LocalPool (MVar (Stripe a))
+data LocalPool a = LocalPool !Int !(MVar (Stripe a))
 
 -- | Stripe of a resource pool. If @available@ is 0, the list of threads waiting
 -- for a resource (each with an associated 'MVar') is @queue ++ reverse queueR@.
@@ -81,16 +81,15 @@ newPool create free idleTime maxResources = do
   when (maxResources < 1) $ do
     error "maxResources must be at least 1"
   numStripes <- getNumCapabilities
-  pools <-
-    fmap (smallArrayFromListN numStripes)
-    . replicateM numStripes
-    . fmap LocalPool
-    . newMVar
-    $ Stripe { available = maxResources `quotCeil` numStripes
-             , cache     = []
-             , queue     = Empty
-             , queueR    = Empty
-             }
+  when (numStripes < 1) $ do
+    error "numStripes must be at least 1"
+  pools <- fmap (smallArrayFromListN numStripes) . forM [1..numStripes] $ \n -> do
+    LocalPool n <$> newMVar Stripe
+      { available = maxResources `quotCeil` numStripes
+      , cache     = []
+      , queue     = Empty
+      , queueR    = Empty
+      }
   mask_ $ do
     ref        <- newIORef ()
     collectorA <- forkIOWithUnmask $ \unmask -> unmask $ collector pools
@@ -119,7 +118,7 @@ newPool create free idleTime maxResources = do
 --
 -- Note that this will ignore any exceptions in the destroy function.
 destroyResource :: Pool a -> LocalPool a -> a -> IO ()
-destroyResource pool (LocalPool mstripe) a = do
+destroyResource pool (LocalPool _ mstripe) a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
     stripe <- takeMVar mstripe
     newStripe <- signal stripe Nothing
@@ -128,7 +127,7 @@ destroyResource pool (LocalPool mstripe) a = do
 
 -- | Return a resource to the given 'LocalPool'.
 putResource :: LocalPool a -> a -> IO ()
-putResource (LocalPool mstripe) a = do
+putResource (LocalPool _ mstripe) a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
     stripe    <- takeMVar mstripe
     newStripe <- signal stripe (Just a)
@@ -195,7 +194,7 @@ cleanLocalPools
   -> SmallArray (LocalPool a)
   -> IO ()
 cleanLocalPools isStale free pools = do
-  mask $ \unmask -> forM_ pools $ \(LocalPool mstripe) -> do
+  mask $ \unmask -> forM_ pools $ \(LocalPool _ mstripe) -> do
     -- Asynchronous exceptions need to be masked here to prevent leaking of
     -- 'stale' resources before they're freed.
     stale <- modifyMVar mstripe $ \stripe -> unmask $ do
