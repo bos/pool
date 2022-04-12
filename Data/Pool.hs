@@ -119,7 +119,7 @@ data TimeoutException = TimeoutException
   deriving Show
 
 instance Exception TimeoutException
-    
+
 -- | Create a striped resource pool.
 --
 -- Although the garbage collector will destroy all idle resources when
@@ -210,7 +210,7 @@ createPool' create destroy numStripes idleTime maxResources timeout = do
     V.mapM_ (\lp -> mkWeakIORef (lfin lp) (purgeLocalPool destroy lp)) localPools
   return p
 
-  
+
 -- TODO: Propose 'forkIOLabeledWithUnmask' for the base library.
 
 -- | Sparks off a new thread using 'forkIOWithUnmask' to run the given
@@ -311,11 +311,15 @@ takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool@Pool{..} = do
   timeoutSync <- newTVarIO False
   mgr <- Event.getSystemTimerManager
-  timeoutKey <-
-    Event.registerTimeout mgr (toMicroseconds timeout)
-      . atomically
-      . writeTVar timeoutSync
-      $ True
+  timeoutKeyM <- case timeout of
+    Nothing -> pure Nothing
+    Just seconds -> do
+      timeoutKey <-
+        Event.registerTimeout mgr (toMicroseconds seconds)
+        . atomically
+        . writeTVar timeoutSync
+        $ True
+      pure $ Just timeoutKey
   local@LocalPool{..} <- getLocalPool pool
   resource <- liftBase . join . atomically $ do
     stop <- readTVar timeoutSync
@@ -333,11 +337,13 @@ takeResource pool@Pool{..} = do
               create `onException` atomically (modifyTVar_ inUse (subtract 1))
   -- Note: We'll miss unregistering the timeout on exception, but it will be
   -- unregistered automatically after the given time has passed.
-  Event.unregisterTimeout mgr timeoutKey
+  case timeoutKeyM of
+    Nothing -> pure ()
+    Just timeoutKey -> Event.unregisterTimeout mgr timeoutKey
   return (resource, local)
   where
-    toMicroseconds :: Maybe NominalDiffTime -> Int
-    toMicroseconds = maybe maxBound ((* 1_000_000) . round . nominalDiffTimeToSeconds)
+    toMicroseconds :: NominalDiffTime -> Int
+    toMicroseconds = (* 1_000_000) . round . nominalDiffTimeToSeconds
 {-# INLINABLE takeResource #-}
 
 -- | Similar to 'withResource', but only performs the action if a resource could
