@@ -36,4 +36,5 @@ library
 
   default-extensions: DeriveGeneric
                     , LambdaCase
+                    , RankNTypes
                     , TypeApplications

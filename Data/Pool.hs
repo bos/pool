@@ -55,27 +55,28 @@ withResource pool act = mask $ \unmask -> do
 -- to the pool (via 'putResource').
 takeResource :: Pool a -> IO (a, LocalPool a)
 takeResource pool = mask_ $ do
-  localPool@(LocalPool _ mstripe) <- getLocalPool (localPools pool)
-  stripe <- takeMVar mstripe
+  lp <- getLocalPool (localPools pool)
+  stripe <- takeMVar (stripeVar lp)
   if available stripe == 0
     then do
       q <- newEmptyMVar
-      putMVar mstripe $! stripe { queueR = Queue q (queueR stripe) }
-      waitForResource mstripe q >>= \case
-        Just a  -> pure (a, localPool)
+      putMVar (stripeVar lp) $! stripe { queueR = Queue q (queueR stripe) }
+      waitForResource (stripeVar lp) q >>= \case
+        Just a  -> pure (a, lp)
         Nothing -> do
-          a <- createResource pool `onException` restoreSize mstripe
-          pure (a, localPool)
+          a <- createResource pool `onException` restoreSize (stripeVar lp)
+          pure (a, lp)
     else case cache stripe of
       [] -> do
-        putMVar mstripe $! stripe { available = available stripe - 1 }
-        a <- createResource pool `onException` restoreSize mstripe
-        pure (a, localPool)
+        putMVar (stripeVar lp) $! stripe { available = available stripe - 1 }
+        a <- createResource pool `onException` restoreSize (stripeVar lp)
+        pure (a, lp)
       Entry a _ : as -> do
-        putMVar mstripe $! stripe { available = available stripe - 1
-                                  , cache = as
-                                  }
-        pure (a, localPool)
+        putMVar (stripeVar lp) $! stripe
+         { available = available stripe - 1
+         , cache = as
+         }
+        pure (a, lp)
 
 {-# DEPRECATED createPool "Use newPool instead" #-}
 -- | Provided for compatibility with @resource-pool < 0.3@.

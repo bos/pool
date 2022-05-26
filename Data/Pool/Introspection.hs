@@ -55,29 +55,29 @@ withResource pool act = mask $ \unmask -> do
 takeResource :: Pool a -> IO (Resource a, LocalPool a)
 takeResource pool = mask_ $ do
   t1 <- getMonotonicTime
-  localPool@(LocalPool n mstripe) <- getLocalPool (localPools pool)
-  stripe <- takeMVar mstripe
+  lp <- getLocalPool (localPools pool)
+  stripe <- takeMVar (stripeVar lp)
   if available stripe == 0
     then do
       q <- newEmptyMVar
-      putMVar mstripe $! stripe { queueR = Queue q (queueR stripe) }
-      waitForResource mstripe q >>= \case
+      putMVar (stripeVar lp) $! stripe { queueR = Queue q (queueR stripe) }
+      waitForResource (stripeVar lp) q >>= \case
         Just a -> do
           t2 <- getMonotonicTime
-          pure (Resource a n (t2 - t1) (WaitedThen Taken) 0, localPool)
+          pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Taken) 0, lp)
         Nothing -> do
-          a  <- createResource pool `onException` restoreSize mstripe
+          a  <- createResource pool `onException` restoreSize (stripeVar lp)
           t2 <- getMonotonicTime
-          pure (Resource a n (t2 - t1) (WaitedThen Created) 0, localPool)
+          pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Created) 0, lp)
     else case cache stripe of
       [] -> do
         let newAvailable = available stripe - 1
-        putMVar mstripe $! stripe { available = newAvailable }
-        a  <- createResource pool `onException` restoreSize mstripe
+        putMVar (stripeVar lp) $! stripe { available = newAvailable }
+        a  <- createResource pool `onException` restoreSize (stripeVar lp)
         t2 <- getMonotonicTime
-        pure (Resource a n (t2 - t1) Created newAvailable, localPool)
+        pure (Resource a (stripeId lp) (t2 - t1) Created newAvailable, lp)
       Entry a _ : as -> do
         let newAvailable = available stripe - 1
-        putMVar mstripe $! stripe { available = newAvailable, cache = as }
+        putMVar (stripeVar lp) $! stripe { available = newAvailable, cache = as }
         t2 <- getMonotonicTime
-        pure (Resource a n (t2 - t1) Taken newAvailable, localPool)
+        pure (Resource a (stripeId lp) (t2 - t1) Taken newAvailable, lp)

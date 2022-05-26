@@ -26,7 +26,11 @@ data Pool a = Pool
   }
 
 -- | A single, capability-local pool.
-data LocalPool a = LocalPool !Int !(MVar (Stripe a))
+data LocalPool a = LocalPool
+  { stripeId   :: !Int
+  , stripeVar  :: !(MVar (Stripe a))
+  , cleanerRef :: !(IORef ())
+  }
 
 -- | Stripe of a resource pool. If @available@ is 0, the list of threads waiting
 -- for a resource (each with an associated 'MVar') is @queue ++ reverse queueR@.
@@ -84,18 +88,26 @@ newPool create free idleTime maxResources = do
   when (numStripes < 1) $ do
     error "numStripes must be at least 1"
   pools <- fmap (smallArrayFromListN numStripes) . forM [1..numStripes] $ \n -> do
-    LocalPool n <$> newMVar Stripe
+    ref <- newIORef ()
+    stripe <- newMVar Stripe
       { available = maxResources `quotCeil` numStripes
       , cache     = []
       , queue     = Empty
       , queueR    = Empty
       }
+    -- When the local pool goes out of scope, free its resources.
+    void . mkWeakIORef ref $ cleanStripe (const True) free stripe
+    pure LocalPool { stripeId   = n
+                   , stripeVar  = stripe
+                   , cleanerRef = ref
+                   }
   mask_ $ do
     ref        <- newIORef ()
     collectorA <- forkIOWithUnmask $ \unmask -> unmask $ collector pools
     void . mkWeakIORef ref $ do
+      -- When the pool goes out of scope, stop the collector. Resources existing
+      -- in stripes will be taken care by their cleaners.
       killThread collectorA
-      cleanLocalPools (const True) free pools
     pure Pool { createResource = create
               , freeResource   = free
               , localPools     = pools
@@ -112,26 +124,26 @@ newPool create free idleTime maxResources = do
       threadDelay 1000000
       now <- getMonotonicTime
       let isStale e = now - lastUsed e > idleTime
-      cleanLocalPools isStale free pools
+      mapM_ (cleanStripe isStale free . stripeVar) pools
 
 -- | Destroy a resource.
 --
 -- Note that this will ignore any exceptions in the destroy function.
 destroyResource :: Pool a -> LocalPool a -> a -> IO ()
-destroyResource pool (LocalPool _ mstripe) a = do
+destroyResource pool lp a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
-    stripe <- takeMVar mstripe
+    stripe <- takeMVar (stripeVar lp)
     newStripe <- signal stripe Nothing
-    putMVar mstripe newStripe
+    putMVar (stripeVar lp) newStripe
     void . try @SomeException $ freeResource pool a
 
 -- | Return a resource to the given 'LocalPool'.
 putResource :: LocalPool a -> a -> IO ()
-putResource (LocalPool _ mstripe) a = do
+putResource lp a = do
   uninterruptibleMask_ $ do -- Note [signal uninterruptible]
-    stripe    <- takeMVar mstripe
+    stripe    <- takeMVar (stripeVar lp)
     newStripe <- signal stripe (Just a)
-    putMVar mstripe newStripe
+    putMVar (stripeVar lp) newStripe
 
 -- | Destroy all resources in all stripes in the pool.
 --
@@ -148,8 +160,8 @@ putResource (LocalPool _ mstripe) a = do
 -- the garbage collector to destroy them, thus freeing up those resources
 -- sooner.
 destroyAllResources :: Pool a -> IO ()
-destroyAllResources pool = do
-  cleanLocalPools (const True) (freeResource pool) (localPools pool)
+destroyAllResources pool = forM_ (localPools pool) $ \lp -> do
+  cleanStripe (const True) (freeResource pool) (stripeVar lp)
 
 ----------------------------------------
 -- Helpers
@@ -188,26 +200,25 @@ restoreSize mstripe = uninterruptibleMask_ $ do
   putMVar mstripe $! stripe { available = available stripe + 1 }
 
 -- | Free resource entries in the stripes that fulfil a given condition.
-cleanLocalPools
+cleanStripe
   :: (Entry a -> Bool)
   -> (a -> IO ())
-  -> SmallArray (LocalPool a)
+  -> MVar (Stripe a)
   -> IO ()
-cleanLocalPools isStale free pools = do
-  mask $ \unmask -> forM_ pools $ \(LocalPool _ mstripe) -> do
-    -- Asynchronous exceptions need to be masked here to prevent leaking of
-    -- 'stale' resources before they're freed.
-    stale <- modifyMVar mstripe $ \stripe -> unmask $ do
-      let (stale, fresh) = L.partition isStale (cache stripe)
-          -- There's no need to update 'available' here because it only tracks
-          -- the number of resources taken from the pool.
-          newStripe      = stripe { cache = fresh }
-      newStripe `seq` pure (newStripe, map entry stale)
-    -- We need to ignore exceptions in the 'free' function, otherwise if an
-    -- exception is thrown half-way, we leak the rest of the resources. Also,
-    -- asynchronous exceptions need to be hard masked here since freeing a
-    -- resource might in theory block.
-    uninterruptibleMask_ . forM_ stale $ try @SomeException . free
+cleanStripe isStale free mstripe = mask $ \unmask -> do
+  -- Asynchronous exceptions need to be masked here to prevent leaking of
+  -- 'stale' resources before they're freed.
+  stale <- modifyMVar mstripe $ \stripe -> unmask $ do
+    let (stale, fresh) = L.partition isStale (cache stripe)
+        -- There's no need to update 'available' here because it only tracks
+        -- the number of resources taken from the pool.
+        newStripe      = stripe { cache = fresh }
+    newStripe `seq` pure (newStripe, map entry stale)
+  -- We need to ignore exceptions in the 'free' function, otherwise if an
+  -- exception is thrown half-way, we leak the rest of the resources. Also,
+  -- asynchronous exceptions need to be hard masked here since freeing a
+  -- resource might in theory block.
+  uninterruptibleMask_ . forM_ stale $ try @SomeException . free
 
 -- Note [signal uninterruptible]
 --
