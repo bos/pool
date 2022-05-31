@@ -5,3 +5,6 @@
 [![Dependencies](https://img.shields.io/hackage-deps/v/resource-pool.svg)](https://packdeps.haskellers.com/feed?needle=andrzej@rybczak.net)
 [![Stackage LTS](https://www.stackage.org/package/resource-pool/badge/lts)](https://www.stackage.org/lts/package/resource-pool)
 [![Stackage Nightly](https://www.stackage.org/package/resource-pool/badge/nightly)](https://www.stackage.org/nightly/package/resource-pool)
+
+A high-performance striped resource pooling implementation for Haskell based on
+[Control.Concurrent.QSem](https://hackage.haskell.org/package/base/docs/Control-Concurrent-QSem.html).
