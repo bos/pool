@@ -7,4 +7,4 @@
 [![Stackage Nightly](https://www.stackage.org/package/resource-pool/badge/nightly)](https://www.stackage.org/nightly/package/resource-pool)
 
 A high-performance striped resource pooling implementation for Haskell based on
-[Control.Concurrent.QSem](https://hackage.haskell.org/package/base/docs/Control-Concurrent-QSem.html).
+[QSem](https://hackage.haskell.org/package/base/docs/Control-Concurrent-QSem.html).
