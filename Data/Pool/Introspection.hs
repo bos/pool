@@ -1,7 +1,8 @@
 -- | A variant of "Data.Pool" with introspection capabilities.
 module Data.Pool.Introspection
   ( -- * Pool
-    Pool
+    PoolConfig(..)
+  , Pool
   , LocalPool
   , newPool
 
@@ -66,14 +67,14 @@ takeResource pool = mask_ $ do
           t2 <- getMonotonicTime
           pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Taken) 0, lp)
         Nothing -> do
-          a  <- createResource pool `onException` restoreSize (stripeVar lp)
+          a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
           t2 <- getMonotonicTime
           pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Created) 0, lp)
     else case cache stripe of
       [] -> do
         let newAvailable = available stripe - 1
         putMVar (stripeVar lp) $! stripe { available = newAvailable }
-        a  <- createResource pool `onException` restoreSize (stripeVar lp)
+        a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
         t2 <- getMonotonicTime
         pure (Resource a (stripeId lp) (t2 - t1) Created newAvailable, lp)
       Entry a _ : as -> do

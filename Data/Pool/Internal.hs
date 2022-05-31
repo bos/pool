@@ -19,10 +19,9 @@ import qualified Data.List as L
 -- so that they never compete over access to the same stripe. This results in a
 -- very good performance in a multi-threaded environment.
 data Pool a = Pool
-  { createResource :: !(IO a)
-  , freeResource   :: !(a -> IO ())
-  , localPools     :: !(SmallArray (LocalPool a))
-  , reaperRef      :: !(IORef ())
+  { poolConfig   :: !(PoolConfig a)
+  , localPools   :: !(SmallArray (LocalPool a))
+  , reaperRef    :: !(IORef ())
   }
 
 -- | A single, capability-local pool.
@@ -52,51 +51,55 @@ data Entry a = Entry
 -- Basically a monomorphic list to save two pointer indirections.
 data Queue a = Queue !(MVar (Maybe a)) (Queue a) | Empty
 
--- | Create a new striped resource pool.
---
--- The number of stripes is equal to the number of capabilities @N@.
---
--- /Note:/ although the garbage collector will destroy all idle resources when
--- the pool is garbage collected, it's recommended to manually call
--- 'destroyAllResources' when you're done with the pool so that the resources
--- are freed up as soon as possible.
-newPool
-  :: IO a
-  -- ^ The action that creates a new resource.
-  -> (a -> IO ())
-  -- ^ The action that destroys an existing resource.
-  -> Double
-  -- ^ The amount of seconds for which an unused resource is kept open. The
+-- | Configuration of a 'Pool'.
+data PoolConfig a = PoolConfig
+  { createResource :: !(IO a)
+    -- ^ The action that creates a new resource.
+  , freeResource :: !(a -> IO ())
+    -- ^ The action that destroys an existing resource.
+  , poolCacheTTL :: !Double
+  -- ^ The amount of seconds for which an unused resource is kept around. The
   -- smallest acceptable value is @0.5@.
   --
   -- /Note:/ the elapsed time before destroying a resource may be a little
   -- longer than requested, as the collector thread wakes at 1-second intervals.
-  -> Int
-  -- ^ The number of resources to keep open across all stripes. The smallest
-  -- acceptable value is @1@.
+  , poolMaxResources :: !Int
+  -- ^ The maximum number of resources to keep open across all stripes. The
+  -- smallest acceptable value is @1@.
   --
   -- /Note:/ for each stripe the number of resources is divided by the number of
   -- capabilities and rounded up. Therefore the pool might end up creating up to
-  -- @N - 1@ resources more in total than specified.
-  -> IO (Pool a)
-newPool create free idleTime maxResources = do
-  when (idleTime < 0.5) $ do
-    error "idleTime must be at least 0.5"
-  when (maxResources < 1) $ do
-    error "maxResources must be at least 1"
+  -- @N - 1@ resources more in total than specified, where @N@ is the number of
+  -- capabilities.
+  }
+
+-- | Create a new striped resource pool.
+--
+-- The number of stripes is equal to the number of capabilities.
+--
+-- /Note:/ although the runtime system will destroy all idle resources when the
+-- pool is garbage collected, it's recommended to manually call
+-- 'destroyAllResources' when you're done with the pool so that the resources
+-- are freed up as soon as possible.
+newPool :: PoolConfig a -> IO (Pool a)
+newPool pc = do
+  when (poolCacheTTL pc < 0.5) $ do
+    error "poolCacheTTL must be at least 0.5"
+  when (poolMaxResources pc < 1) $ do
+    error "poolMaxResources must be at least 1"
   numStripes <- getNumCapabilities
   when (numStripes < 1) $ do
     error "numStripes must be at least 1"
   pools <- fmap (smallArrayFromListN numStripes) . forM [1..numStripes] $ \n -> do
     ref <- newIORef ()
     stripe <- newMVar Stripe
-      { available = maxResources `quotCeil` numStripes
+      { available = poolMaxResources pc `quotCeil` numStripes
       , cache     = []
       , queue     = Empty
       , queueR    = Empty
       }
     -- When the local pool goes out of scope, free its resources.
-    void . mkWeakIORef ref $ cleanStripe (const True) free stripe
+    void . mkWeakIORef ref $ cleanStripe (const True) (freeResource pc) stripe
     pure LocalPool { stripeId   = n
                    , stripeVar  = stripe
                    , cleanerRef = ref
@@ -108,10 +111,9 @@ newPool create free idleTime maxResources = do
       -- When the pool goes out of scope, stop the collector. Resources existing
       -- in stripes will be taken care by their cleaners.
       killThread collectorA
-    pure Pool { createResource = create
-              , freeResource   = free
-              , localPools     = pools
-              , reaperRef      = ref
+    pure Pool { poolConfig = pc
+              , localPools = pools
+              , reaperRef  = ref
               }
   where
     quotCeil :: Int -> Int -> Int
@@ -123,8 +125,8 @@ newPool create free idleTime maxResources = do
     collector pools = forever $ do
       threadDelay 1000000
       now <- getMonotonicTime
-      let isStale e = now - lastUsed e > idleTime
-      mapM_ (cleanStripe isStale free . stripeVar) pools
+      let isStale e = now - lastUsed e > poolCacheTTL pc
+      mapM_ (cleanStripe isStale (freeResource pc) . stripeVar) pools
 
 -- | Destroy a resource.
 --
@@ -135,7 +137,7 @@ destroyResource pool lp a = do
     stripe <- takeMVar (stripeVar lp)
     newStripe <- signal stripe Nothing
     putMVar (stripeVar lp) newStripe
-    void . try @SomeException $ freeResource pool a
+    void . try @SomeException $ freeResource (poolConfig pool) a
 
 -- | Return a resource to the given 'LocalPool'.
 putResource :: LocalPool a -> a -> IO ()
@@ -161,7 +163,7 @@ putResource lp a = do
 -- sooner.
 destroyAllResources :: Pool a -> IO ()
 destroyAllResources pool = forM_ (localPools pool) $ \lp -> do
-  cleanStripe (const True) (freeResource pool) (stripeVar lp)
+  cleanStripe (const True) (freeResource (poolConfig pool)) (stripeVar lp)
 
 ----------------------------------------
 -- Helpers

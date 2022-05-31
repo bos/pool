@@ -2,7 +2,8 @@
 -- collections of resources such as database connections.
 module Data.Pool
   ( -- * Pool
-    Pool
+    PoolConfig(..)
+  , Pool
   , LocalPool
   , newPool
 
@@ -64,12 +65,12 @@ takeResource pool = mask_ $ do
       waitForResource (stripeVar lp) q >>= \case
         Just a  -> pure (a, lp)
         Nothing -> do
-          a <- createResource pool `onException` restoreSize (stripeVar lp)
+          a <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
           pure (a, lp)
     else case cache stripe of
       [] -> do
         putMVar (stripeVar lp) $! stripe { available = available stripe - 1 }
-        a <- createResource pool `onException` restoreSize (stripeVar lp)
+        a <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
         pure (a, lp)
       Entry a _ : as -> do
         putMVar (stripeVar lp) $! stripe
@@ -83,5 +84,9 @@ takeResource pool = mask_ $ do
 --
 -- Use 'newPool' instead.
 createPool :: IO a -> (a -> IO ()) -> Int -> NominalDiffTime -> Int -> IO (Pool a)
-createPool create free numStripes idleTime maxResources = do
-  newPool create free (realToFrac idleTime) (numStripes * maxResources)
+createPool create free numStripes idleTime maxResources = newPool PoolConfig
+  { createResource   = create
+  , freeResource     = free
+  , poolCacheTTL     = realToFrac idleTime
+  , poolMaxResources = numStripes * maxResources
+  }
