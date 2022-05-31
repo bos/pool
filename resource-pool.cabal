@@ -24,6 +24,8 @@ source-repository head
   location: https://github.com/scrive/pool.git
 
 library
+  hs-source-dirs:  src
+
   exposed-modules: Data.Pool
                    Data.Pool.Internal
                    Data.Pool.Introspection
