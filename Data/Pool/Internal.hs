@@ -2,7 +2,7 @@
 --
 -- This module is intended for internal use only, and may change without warning
 -- in subsequent releases.
-{-# OPTIONS_HADDOCK hide, not-home #-}
+{-# OPTIONS_HADDOCK not-home #-}
 module Data.Pool.Internal where
 
 import Control.Concurrent
