@@ -8,7 +8,7 @@ module Data.Pool.Introspection
 
     -- * Resource management
   , Resource(..)
-  , AcquisitionMethod(..)
+  , Acquisition(..)
   , withResource
   , takeResource
   , putResource
@@ -27,21 +27,18 @@ import Data.Pool.Internal
 data Resource a = Resource
   { resource           :: a
   , stripeNumber       :: !Int
-  , acquisitionTime    :: !Double
-  , acquisitionMethod  :: !AcquisitionMethod
   , availableResources :: !Int
+  , acquisition        :: !Acquisition
+  , acquisitionTime    :: !Double
+  , creationTime       :: !(Maybe Double)
   } deriving (Eq, Show, Generic)
 
--- | Method of acquiring a resource from the pool.
-data AcquisitionMethod
-  = Created
-  -- ^ A new resource was created.
-  | Taken
-  -- ^ An existing resource was directly taken from the pool.
-  | WaitedThen !AcquisitionMethod
-  -- ^ The thread had to wait until a resource was released. The inner method
-  -- signifies whether the resource was returned to the pool via 'putResource'
-  -- ('Taken') or 'destroyResource' ('Created').
+-- | Describes how a resource was acquired from the pool.
+data Acquisition
+  = Immediate
+  -- ^ A resource was taken from the pool immediately.
+  | Delayed
+  -- ^ The thread had to wait until a resource was released.
   deriving (Eq, Show, Generic)
 
 -- | 'Data.Pool.withResource' with introspection capabilities.
@@ -65,20 +62,54 @@ takeResource pool = mask_ $ do
       waitForResource (stripeVar lp) q >>= \case
         Just a -> do
           t2 <- getMonotonicTime
-          pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Taken) 0, lp)
+          let res = Resource
+                { resource           = a
+                , stripeNumber       = stripeId lp
+                , availableResources = 0
+                , acquisition        = Delayed
+                , acquisitionTime    = t2 - t1
+                , creationTime       = Nothing
+                }
+          pure (res, lp)
         Nothing -> do
-          a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
           t2 <- getMonotonicTime
-          pure (Resource a (stripeId lp) (t2 - t1) (WaitedThen Created) 0, lp)
+          a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
+          t3 <- getMonotonicTime
+          let res = Resource
+                { resource           = a
+                , stripeNumber       = stripeId lp
+                , availableResources = 0
+                , acquisition        = Delayed
+                , acquisitionTime    = t2 - t1
+                , creationTime       = Just $! t3 - t2
+                }
+          pure (res, lp)
     else case cache stripe of
       [] -> do
         let newAvailable = available stripe - 1
         putMVar (stripeVar lp) $! stripe { available = newAvailable }
-        a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
         t2 <- getMonotonicTime
-        pure (Resource a (stripeId lp) (t2 - t1) Created newAvailable, lp)
+        a  <- createResource (poolConfig pool) `onException` restoreSize (stripeVar lp)
+        t3 <- getMonotonicTime
+        let res = Resource
+              { resource           = a
+              , stripeNumber       = stripeId lp
+              , availableResources = newAvailable
+              , acquisition        = Immediate
+              , acquisitionTime    = t2 - t1
+              , creationTime       = Just $! t3 - t2
+              }
+        pure (res, lp)
       Entry a _ : as -> do
         let newAvailable = available stripe - 1
         putMVar (stripeVar lp) $! stripe { available = newAvailable, cache = as }
         t2 <- getMonotonicTime
-        pure (Resource a (stripeId lp) (t2 - t1) Taken newAvailable, lp)
+        let res = Resource
+              { resource           = a
+              , stripeNumber       = stripeId lp
+              , availableResources = newAvailable
+              , acquisition        = Immediate
+              , acquisitionTime    = t2 - t1
+              , creationTime       = Nothing
+              }
+        pure (res, lp)
