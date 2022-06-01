@@ -16,7 +16,9 @@ description: A high-performance striped pooling abstraction for managing
 
 tested-with: GHC ==8.4.4 || ==8.6.5 || ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.2
 
-extra-doc-files: CHANGELOG.md
+extra-doc-files:
+  CHANGELOG.md
+  README.md
 
 bug-reports: https://github.com/scrive/pool/issues
 source-repository head
